@@ -1,0 +1,44 @@
+stages: [build, test]
+
+variables:
+  DOCKER_DRIVER: overlay2
+  API: "http://localhost:8000"
+  KEY: "dev-apikey-123"
+
+services:
+  - docker:dind
+
+image: docker:24.0.7
+
+before_script:
+  - apk add --no-cache bash curl jq python3 py3-pip
+  - pip install -q pytest requests
+
+build:
+  stage: build
+  script:
+    - cp .env.example .env
+    - docker compose -f docker/docker-compose.yml up -d --build
+    - docker compose -f docker/docker-compose.yml ps
+    - |
+      for i in $(seq 1 60); do
+        if docker compose -f docker/docker-compose.yml exec -T db pg_isready -U postgres; then break; fi
+        sleep 2
+      done
+    - docker compose -f docker/docker-compose.yml exec -T api alembic upgrade head
+    - |
+      for i in $(seq 1 60); do
+        code=$(curl -s -o /dev/null -w '%{http_code}' "${API}/api/v1/health" || true)
+        [ "$code" = "200" ] && break
+        sleep 2
+      done
+
+test:
+  stage: test
+  script:
+    - chmod +x scripts/smoke_http_targets.sh
+    - API="$API" KEY="$KEY" ./scripts/smoke_http_targets.sh
+    - API="$API" KEY="$KEY" pytest -q server/tests/test_http_targets_integration.py
+  after_script:
+    - docker compose -f docker/docker-compose.yml logs --no-color || true
+    - docker compose -f docker/docker-compose.yml down -v
