@@ -5,6 +5,11 @@ on:
     branches: [ main ]
   pull_request:
 
+# Évite les exécutions parallèles sur la même branche
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -18,6 +23,12 @@ jobs:
           docker --version
           docker compose version || true
 
+      # (Optionnel mais sûr) jq est utilisé par le script de smoke
+      - name: Ensure curl + jq are present
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y curl jq
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -28,10 +39,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest requests
 
-      - name: Copy env and start stack
+      # IMPORTANT : Compose (dans docker/) référence ../.env  -> on crée .env à la racine
+      - name: Prepare root .env from example
+        run: |
+          if [ -f .env.example ]; then
+            cp .env.example .env
+          else
+            echo "ERROR: .env.example is missing at repo root" >&2
+            exit 1
+          fi
+
+      - name: Start stack (docker compose)
         working-directory: docker
         run: |
-          cp ../.env.example .env
           docker compose up -d --build
           docker compose ps
 
@@ -67,7 +87,7 @@ jobs:
         if: failure()
         working-directory: docker
         run: |
-          docker compose ps
+          docker compose ps || true
           echo "----- api logs -----"
           docker compose logs api | tail -n 400 || true
           echo "----- worker logs -----"
