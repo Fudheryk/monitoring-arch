@@ -1,0 +1,51 @@
+[project]
+name = "monitoring-server-app"
+version = "0.2.1"
+description = "Application de monitoring HTTP et de serveurs"
+authors = [
+    { name = "Frédéric GIL GARCIA", email = "frederic.gilgarcia@gmail.com" },
+]
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Framework :: FastAPI",
+    "Topic :: System :: Monitoring",
+]
+
+dependencies = [
+    "fastapi>=0.111,<0.112",
+    "uvicorn[standard]>=0.29,<0.31",
+    "pydantic>=2.7,<3.0",
+    "pydantic-settings>=2.2,<3.0",
+    "sqlalchemy>=2.0,<3.0",
+    "psycopg[binary,pool]>=3.1,<4.0",
+    "alembic>=1.12,<2.0",
+    "httpx>=0.27,<0.28",
+    "celery>=5.3,<6.0",
+    "redis>=5.0,<6.0",
+    "python-dotenv>=1.0,<2.0",
+    "jinja2>=3.1,<4.0",
+    "requests>=2.31,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0,<9.0",
+    "pytest-cov>=4.0,<6.0",
+    "black>=23.0,<25.0",
+    "mypy>=1.0,<2.0",
+    "ruff>=0.5,<0.7",
+]
+
+[project.urls]
+homepage = "https://example.com"
+repository = "https://example.com/monitoring-server-app"
+
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"

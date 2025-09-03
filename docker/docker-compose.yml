@@ -1,0 +1,76 @@
+x-app-common: &app-common
+  build:
+    context: ..
+    dockerfile: ./server/Dockerfile
+  env_file: ../.env
+  working_dir: /app/server
+  volumes:
+    # Pratique en dev (hot reload). En prod, supprime ce montage.
+    - ../server:/app/server
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *app-common
+    # Fait appel à /entrypoint.sh "api" -> alembic upgrade + uvicorn
+    command: ["api"]
+    ports: ["8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/api/v1/health').getcode()==200 else sys.exit(1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    <<: *app-common
+    # Passé tel-quel à /entrypoint.sh -> exec "$@"
+    command: >
+      celery -A app.workers.celery_app.celery worker
+      --hostname=worker@%h
+      -Q ingest,evaluate,heartbeat,http,notify
+      -O fair -l info
+    stop_grace_period: 30s
+
+  beat:
+    <<: *app-common
+    command: celery -A app.workers.celery_app.celery beat -l info
+    stop_grace_period: 30s
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: monitoring
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d monitoring"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports: ["5432:5432"]   # retire cette ligne si l'accès direct depuis l'hôte n'est pas nécessaire
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    command: redis-server --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports: ["6379:6379"]   # retire cette ligne si l'accès direct depuis l'hôte n'est pas nécessaire
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+
+networks:
+  default:
+    driver: bridge

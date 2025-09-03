@@ -1,0 +1,31 @@
+# Environnements virtuels
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+
+# Tests
+.pytest_cache/
+
+# Outils d'analyse statique
+.mypy_cache/
+.dmypy.json
+.pyre/
+.pytype/
+
+# Build / distribution
+dist/
+build/
+
+# Fichiers sensibles (ne jamais pousser)
+.env
+.env.*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
