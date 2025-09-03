@@ -29,3 +29,4 @@ build/
 .idea/
 .DS_Store
 
+server/celerybeat-schedule
