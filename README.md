@@ -18,6 +18,26 @@ docker compose exec api alembic upgrade head
 Par défaut l’API écoute sur http://localhost:8000
 Swagger UI : http://localhost:8000/docs — OpenAPI : /openapi.json
 
+## Quick Rebuild / Restart
+
+### Modifs de code Python seulement → pas de rebuild, juste restart
+
+docker compose -f docker/docker-compose.yml restart api worker beat
+
+### Modifs de deps / pyproject.toml, Dockerfile, entrypoint, etc. → rebuild ciblé
+
+docker compose -f docker/docker-compose.yml build api worker beat
+docker compose -f docker/docker-compose.yml up -d api worker beat
+
+(forcé si besoin)
+
+docker compose -f docker/docker-compose.yml build --no-cache api worker beat
+docker compose -f docker/docker-compose.yml up -d api worker beat
+
+### Smoke check
+
+make health
+
 
 ## Jeu de données de dév (si besoin)
 

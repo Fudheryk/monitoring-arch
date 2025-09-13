@@ -5,7 +5,6 @@ Schemas clients.
 """
 from pydantic import BaseModel, EmailStr
 
-from pydantic import BaseModel, EmailStr
 
 class ClientSettingsOut(BaseModel):
     notification_email: EmailStr | None = None

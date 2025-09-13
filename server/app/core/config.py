@@ -4,10 +4,7 @@ from __future__ import annotations
 Paramètres (pydantic-settings).
 """
 from typing import Optional
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-from typing import Optional
-
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -17,9 +14,15 @@ class Settings(BaseSettings):
     NO_DATA_MINUTES: int = 5
     KO_CONSECUTIVE_DEFAULT: int = 2
     SMTP_DSN: Optional[str] = None
+    ALERT_REMINDER_MINUTES: int = Field(15, env="ALERT_REMINDER_MINUTES")
     SLACK_WEBHOOK: Optional[str] = None
     SLACK_DEFAULT_CHANNEL: str = "#notif-webhook"
     CORS_ALLOW_ORIGINS: Optional[str] = None
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
+    
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+    )
 
 settings = Settings()

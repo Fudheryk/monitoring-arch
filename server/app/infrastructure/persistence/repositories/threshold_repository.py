@@ -8,11 +8,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.persistence.database.models.threshold import Threshold
 from app.infrastructure.persistence.database.models.metric import Metric
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from app.infrastructure.persistence.database.models.threshold import Threshold
-from app.infrastructure.persistence.database.models.metric import Metric
 
 class ThresholdRepository:
     def __init__(self, session: Session):

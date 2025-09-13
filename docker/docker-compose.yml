@@ -5,8 +5,9 @@ x-app-common: &app-common
   env_file: ../.env
   working_dir: /app/server
   volumes:
-    # Pratique en dev (hot reload). En prod, supprime ce montage.
+    # Pratique en dev (hot reload). En prod, supprimer ce montage.
     - ../server:/app/server
+    - ../.coveragerc:/app/.coveragerc:ro
   depends_on:
     db:
       condition: service_healthy
@@ -17,18 +18,25 @@ x-app-common: &app-common
 services:
   api:
     <<: *app-common
-    # Fait appel à /entrypoint.sh "api" -> alembic upgrade + uvicorn
     command: ["api"]
+    environment:
+      API_COVERAGE: "${API_COVERAGE:-0}"
+      COVERAGE_RCFILE: "/app/.coveragerc"
     ports: ["8000:8000"]
+    volumes:
+      - ../server:/app/server
+      - ../.coveragerc:/app/.coveragerc:ro
+    stop_signal: SIGINT       
+    stop_grace_period: 20s
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/api/v1/health').getcode()==200 else sys.exit(1)"]
       interval: 10s
       timeout: 3s
       retries: 5
 
+
   worker:
     <<: *app-common
-    # Passé tel-quel à /entrypoint.sh -> exec "$@"
     command: >
       celery -A app.workers.celery_app.celery worker
       --hostname=worker@%h
@@ -52,7 +60,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    ports: ["5432:5432"]   # retire cette ligne si l'accès direct depuis l'hôte n'est pas nécessaire
+    ports: ["5432:5432"]   # retirer cette ligne si l'accès direct depuis l'hôte n'est pas nécessaire
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -65,7 +73,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    ports: ["6379:6379"]   # retire cette ligne si l'accès direct depuis l'hôte n'est pas nécessaire
+    ports: ["6379:6379"]   # retirer cette ligne si l'accès direct depuis l'hôte n'est pas nécessaire
     restart: unless-stopped
 
 volumes:

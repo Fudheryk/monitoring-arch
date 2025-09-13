@@ -1,21 +1,22 @@
 from __future__ import annotations
 """server/app/workers/tasks/notification_tasks.py
 Tâche Celery pour notifications avec :
-- Gestion avancée des erreurs
-- Validation du payload
-- Logging structuré
-- Configuration centralisée
-- Journalisation en base de données
-- Support Slack avec webhook configuré
-- ✅ Rappel périodique paramétrable (cooldown) pour éviter le spam
+- Validation du payload (Pydantic)
+- Retry/backoff, logging structuré
+- Journalisation en base (notification_log)
+- Envoi Slack via webhook
+- ✅ Cooldown (reminder) unique basé sur UNE variable d'env: settings.ALERT_REMINDER_MINUTES
 """
+
 from typing import Dict, Any
 import uuid
 import datetime as dt
 from datetime import timedelta
+
 from celery import shared_task
 from celery.utils.log import get_task_logger
-from pydantic import BaseModel, validator, Field
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
 from app.workers.celery_app import celery
 from app.infrastructure.notifications.providers.slack_provider import SlackProvider
 from app.core.config import settings
@@ -24,52 +25,84 @@ from app.infrastructure.persistence.database.models.notification_log import Noti
 
 logger = get_task_logger(__name__)
 
-# === Utils de configuration locale ===
-def _default_remind_minutes() -> int:
-    """
-    Valeur par défaut pour l'intervalle de rappel (en minutes).
-    - Essaie d'abord settings.ALERT_REMIND_MINUTES
-    - Puis settings.NOTIF_REMIND_MINUTES
-    - Sinon fallback à 60 min
-    """
-    for attr in ("ALERT_REMIND_MINUTES", "NOTIF_REMIND_MINUTES"):
-        try:
-            v = int(getattr(settings, attr))  # peut lever AttributeError/ValueError
-            if v > 0:
-                return v
-        except Exception:
-            pass
-    return 60
+
+# ---------------------------------------------------------------------------
+# Reminder/cooldown: source de vérité unique
+#   - Priorité : override explicite (argument) > ENV (settings.ALERT_REMINDER_MINUTES) > défaut 15
+#   - On garde cette fonction GLOBALE (réutilisable/testable), pas de version imbriquée.
+# ---------------------------------------------------------------------------
+def get_remind_minutes(override: int | None) -> int:
+    if isinstance(override, int) and override > 0:
+        return override
+    try:
+        env_val = int(getattr(settings, "ALERT_REMINDER_MINUTES", 15))
+        return max(1, env_val)
+    except Exception:
+        return 15
+
+
+def _as_utc(d: dt.datetime | None) -> dt.datetime | None:
+    """Retourne un datetime timezone-aware en UTC (tolère None)."""
+    if d is None:
+        return None
+    if d.tzinfo is None:
+        return d.replace(tzinfo=dt.timezone.utc)
+    return d.astimezone(dt.timezone.utc)
+
+
+def _fallback_channel() -> str:
+    """Canal Slack par défaut si rien n’est fourni."""
+    return settings.SLACK_DEFAULT_CHANNEL or "#notif-webhook"
 
 
 class NotificationPayload(BaseModel):
-    """Modèle de validation pour le payload de notification"""
+    """Modèle de validation pour le payload de notification."""
     title: str
     text: str
     kind: str = "info"  # info, warning, error
     message: str = ""
     severity: str = "warning"
-    channel: str = Field(default=settings.SLACK_DEFAULT_CHANNEL, description="Canal Slack par défaut: #notif-webhook")
-    context: Dict[str, Any] = {}
-    metadata: Dict[str, Any] = {}
+    channel: str = Field(
+        default_factory=_fallback_channel,
+        description="Canal Slack par défaut",
+    )
+    context: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     username: str = "MonitoringBot"
     icon_emoji: str = ":bell:"
-    client_id: uuid.UUID = Field(default_factory=lambda: uuid.UUID('00000000-0000-0000-0000-000000000000'), description="ID du client requis")
-    incident_id: uuid.UUID | None = Field(default=None, description="ID de l'incident associé")
-    alert_id: uuid.UUID | None = Field(default=None, description="ID de l'alerte associée")
+    client_id: uuid.UUID = Field(
+        default=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+        description="ID du client (UUID)",
+    )
+    incident_id: uuid.UUID | None = None
+    alert_id: uuid.UUID | None = None
 
-    @validator('severity')
-    def validate_severity(cls, v):
-        """Valide que la sévérité est une valeur autorisée"""
+    @field_validator("severity")
+    @classmethod
+    def validate_severity(cls, v: str):
         if v not in ("info", "warning", "error", "critical"):
-            # On accepte aussi "critical" car c'est utilisé côté alertes
             raise ValueError("Severity must be info/warning/error/critical")
         return v
-    
-    @validator('channel')
+
+    @field_validator("channel", mode="before")
+    @classmethod
     def set_default_channel(cls, v):
-        """Assure que le canal par défaut est utilisé si non spécifié"""
-        return v or settings.SLACK_DEFAULT_CHANNEL
+        v = (v or "").strip()
+        return v or _fallback_channel()
+
+
+def _coerce_uuid(val: Any, default_zero: bool = False) -> uuid.UUID:
+    """Sécurise le passage en UUID (utile dans le except de notify())."""
+    if isinstance(val, uuid.UUID):
+        return val
+    try:
+        return uuid.UUID(str(val))
+    except Exception:
+        return (
+            uuid.UUID("00000000-0000-0000-0000-000000000000")
+            if default_zero
+            else uuid.uuid4()
+        )
 
 
 def log_notification_to_db(
@@ -80,20 +113,11 @@ def log_notification_to_db(
     message: str | None = None,
     error_message: str | None = None,
     incident_id: uuid.UUID | None = None,
-    alert_id: uuid.UUID | None = None
+    alert_id: uuid.UUID | None = None,
 ) -> None:
     """
-    Journalise une notification dans la base de données
-    
-    Args:
-        client_id: ID du client (requis)
-        provider: Fournisseur de notification (slack, email, etc.)
-        recipient: Destinataire (email, channel Slack, etc.)
-        status: Statut de la notification (success, failed, pending)
-        message: Message de la notification
-        error_message: Message d'erreur en cas d'échec
-        incident_id: ID de l'incident associé
-        alert_id: ID de l'alerte associée
+    Journalise une notification dans la base de données.
+    - NOTE: on renseigne sent_at uniquement pour 'success'
     """
     try:
         with get_sync_session() as session:
@@ -106,19 +130,27 @@ def log_notification_to_db(
                 status=status,
                 message=message,
                 error_message=error_message,
-                sent_at=dt.datetime.now(dt.timezone.utc) if status == 'success' else None,
-                created_at=dt.datetime.now(dt.timezone.utc)
+                sent_at=dt.datetime.now(dt.timezone.utc)
+                if status == "success"
+                else None,
+                created_at=dt.datetime.now(dt.timezone.utc),
             )
             session.add(log_entry)
             session.commit()
-            logger.info("Notification logged to database", extra={
-                "notification_id": str(log_entry.id),
-                "status": status,
-                "provider": provider
-            })
+            logger.info(
+                "Notification logged to database",
+                extra={
+                    "notification_id": str(log_entry.id),
+                    "status": status,
+                    "provider": provider,
+                },
+            )
     except Exception as e:
-        logger.error("Failed to log notification to database", 
-                    extra={"error": str(e)}, exc_info=True)
+        logger.error(
+            "Failed to log notification to database",
+            extra={"error": str(e)},
+            exc_info=True,
+        )
 
 
 @celery.task(
@@ -126,246 +158,237 @@ def log_notification_to_db(
     bind=True,
     autoretry_for=(Exception,),
     retry_backoff=30,  # 30s, 60s, 120s
-    retry_kwargs={'max_retries': 3},
+    retry_kwargs={"max_retries": 3},
     acks_late=True,
-    queue="notify"
+    queue="notify",
 )
 def notify(self, payload: Dict[str, Any]) -> bool:
     """
-    Tâche de notification avec :
-    - Validation du payload
-    - Retry automatique
-    - Logging structuré
-    - Journalisation en base de données
-    - Utilisation du webhook Slack configuré dans .env
-    
-    Exemple d'appel :
-    notify.delay({
-        "title": "Incident DB",
-        "text": "Latence élevée sur le serveur de base de données",
-        "severity": "error",
-        "channel": "#alerts-prod",
-        "client_id": "client-uuid",
-        "incident_id": "incident-uuid",
-        "alert_id": "alert-uuid"
-    })
+    Tâche d'envoi de notification (Slack).
+
+    IMPORTANT :
+    - Erreurs de validation (payload invalide) → pas de retry (retour False).
+    - Webhook manquant → pas de retry (retour False).
+    - Erreurs réseau Slack → retry automatique (laisse remonter l’Exception).
     """
     try:
-        # Validation du payload
+        # 1) Validation (avec fallback de channel)
+        payload = {**payload}
+        payload.setdefault("channel", _fallback_channel())
         validated = NotificationPayload(**payload)
-        
-        # Vérification de la configuration Slack
-        if not settings.SLACK_WEBHOOK:
-            error_msg = "Slack webhook not configured. Set SLACK_WEBHOOK in .env"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
-        # Journalisation avant envoi
+
+    except ValidationError as e:
+        # Pas de retry sur un payload invalide : c’est non-transitoire.
+        log_notification_to_db(
+            client_id=_coerce_uuid(payload.get("client_id"), default_zero=True),
+            provider="slack",
+            recipient=str(payload.get("channel") or _fallback_channel()),
+            status="failed",
+            message=str(payload.get("text") or ""),
+            error_message="payload_validation_error",
+            incident_id=payload.get("incident_id"),
+            alert_id=payload.get("alert_id"),
+        )
+        logger.error("Notification payload invalid", extra={"errors": e.errors()})
+        return False
+
+    # 2) Configuration Slack
+    if not settings.SLACK_WEBHOOK:
+        # Pas de webhook → on n’essaie même pas : pas de retry.
         log_notification_to_db(
             client_id=validated.client_id,
-            provider='slack',
+            provider="slack",
             recipient=validated.channel,
-            status='pending',
+            status="failed",
             message=f"{validated.title}: {validated.text}",
+            error_message="slack_webhook_not_configured",
             incident_id=validated.incident_id,
-            alert_id=validated.alert_id
+            alert_id=validated.alert_id,
         )
-        
-        # Préparer les paramètres pour SlackProvider selon sa signature exacte
-        slack_params = {
-            'title': validated.title,
-            'text': validated.text,
-            'severity': validated.severity,
-            'channel': validated.channel,
-            'username': validated.username,
-            'icon_emoji': validated.icon_emoji,
-            'context': validated.context or None
-        }
-        
-        # Envoi avec SlackProvider
-        provider = SlackProvider()
+        logger.error("Slack webhook not configured. Set SLACK_WEBHOOK in .env")
+        return False
+
+    # 3) Journaliser l'intention (pending)
+    log_notification_to_db(
+        client_id=validated.client_id,
+        provider="slack",
+        recipient=validated.channel,
+        status="pending",
+        message=f"{validated.title}: {validated.text}",
+        incident_id=validated.incident_id,
+        alert_id=validated.alert_id,
+    )
+
+    # 4) Envoi via provider (les erreurs réseau déclencheront un retry)
+    slack_params = {
+        "title": validated.title,
+        "text": validated.text,
+        "severity": validated.severity,
+        "channel": validated.channel or _fallback_channel(),
+        "username": validated.username,
+        "icon_emoji": validated.icon_emoji,
+        "context": validated.context or None,
+    }
+
+    try:
+        provider = SlackProvider()  # settings.SLACK_WEBHOOK déjà garanti
         success = provider.send(**slack_params)
-        
-        if not success:
-            # Journalisation de l'échec
-            log_notification_to_db(
-                client_id=validated.client_id,
-                provider='slack',
-                recipient=validated.channel,
-                status='failed',
-                message=f"{validated.title}: {validated.text}",
-                error_message="Slack API request failed",
-                incident_id=validated.incident_id,
-                alert_id=validated.alert_id
-            )
-            
-            logger.warning("Notification failed", extra={
-                "payload": {k: v for k, v in payload.items() if k != 'text'},
-                "retries": self.request.retries,
-                "slack_webhook": settings.SLACK_WEBHOOK[:20] + "..."  # Log partiel pour sécurité
-            })
-            raise Exception("Slack API request failed")
-        
-        # Journalisation du succès
+    except Exception as e:
+        # Erreur transitoire (réseau, webhook non joignable, etc.) → retry
         log_notification_to_db(
             client_id=validated.client_id,
-            provider='slack',
+            provider="slack",
             recipient=validated.channel,
-            status='success',
+            status="failed",
             message=f"{validated.title}: {validated.text}",
-            incident_id=validated.incident_id,
-            alert_id=validated.alert_id
-        )
-        
-        logger.info("Notification sent successfully", extra={
-            "channel": validated.channel,
-            "severity": validated.severity,
-            "title": validated.title
-        })
-            
-        return True
-        
-    except Exception as e:
-        # Journalisation de l'erreur
-        log_notification_to_db(
-            client_id=payload.get('client_id', uuid.UUID('00000000-0000-0000-0000-000000000000')),
-            provider='slack',
-            recipient=payload.get('channel', settings.SLACK_DEFAULT_CHANNEL),
-            status='failed',
-            message=payload.get('text', ''),
             error_message=str(e),
-            incident_id=payload.get('incident_id'),
-            alert_id=payload.get('alert_id')
+            incident_id=validated.incident_id,
+            alert_id=validated.alert_id,
         )
-        
-        logger.error("Notification error", 
-            extra={
-                "error": str(e),
-                "payload": {k: v for k, v in payload.items() if k != 'text'},  # Éviter de logger tout le texte
-                "retries": self.request.retries
-            },
-            exc_info=True
-        )
+        logger.error("Notification error", extra={"error": str(e)}, exc_info=True)
         raise self.retry(exc=e)
 
-@shared_task(
+    if not success:
+        # Échec applicatif (HTTP non-200) → on loggue et laisse retry (Exception)
+        log_notification_to_db(
+            client_id=validated.client_id,
+            provider="slack",
+            recipient=validated.channel,
+            status="failed",
+            message=f"{validated.title}: {validated.text}",
+            error_message="slack_api_request_failed",
+            incident_id=validated.incident_id,
+            alert_id=validated.alert_id,
+        )
+        logger.warning("Notification failed (Slack API returned non-ok)")
+        raise Exception("Slack API request failed")
+
+    # 5) succès → log 'success'
+    log_notification_to_db(
+        client_id=validated.client_id,
+        provider="slack",
+        recipient=validated.channel,
+        status="success",
+        message=f"{validated.title}: {validated.text}",
+        incident_id=validated.incident_id,
+        alert_id=validated.alert_id,
+    )
+
+    logger.info(
+        "Notification sent successfully",
+        extra={"channel": validated.channel, "severity": validated.severity, "title": validated.title},
+    )
+    return True
+
+
+@celery.task(
     name="notify_alert",
     bind=True,
     autoretry_for=(Exception,),
     retry_backoff=30,
-    retry_kwargs={'max_retries': 3},
+    retry_kwargs={"max_retries": 3},
     acks_late=True,
-    queue="notify"
+    queue="notify",
 )
 def notify_alert(self, alert_id: str, *, remind_after_minutes: int | None = None) -> None:
     """
-    Tâche optimisée pour notifier une alerte spécifique.
-    Ne reçoit que l'ID de l'alerte pour découplage total.
+    Notifie une alerte par Slack avec cooldown.
+    Envoi si :
+      - aucune "success" encore envoyée pour cette alerte, OU
+      - la dernière "success" date de plus que le cooldown.
 
-    ✅ Rappel (cooldown) paramétrable
-    - On n'envoie PAS à chaque évaluation.
-    - On envoie si AUCUNE notification "success" n'a encore été envoyée (création),
-      sinon uniquement si la dernière "success" a plus de `remind_after_minutes`.
-    - `remind_after_minutes` est optionnel ; si None → valeur par défaut (ALERT_REMINDER_MINUTES, déf. 15).
+    Cooldown = get_remind_minutes(remind_after_minutes) minutes.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-
     if not alert_id:
         logger.warning("notify_alert appelé sans alert_id")
         return
 
-    from app.infrastructure.persistence.database.session import get_sync_session
+    try:
+        alert_uuid = uuid.UUID(str(alert_id))
+    except Exception:
+        logger.warning("notify_alert appelé avec un alert_id invalide: %r", alert_id)
+        return
+
+    # Imports locaux pour éviter les cycles
+    from sqlalchemy import select
     from app.infrastructure.persistence.database.models.alert import Alert
     from app.infrastructure.persistence.database.models.machine import Machine
     from app.infrastructure.persistence.database.models.metric import Metric
-    from app.infrastructure.persistence.database.models.threshold import Threshold
-    from app.workers.tasks.notification_tasks import notify  # réutilise la tâche notify()
+    from app.infrastructure.persistence.database.models.threshold import Threshold  # noqa: F401
+    from app.workers.tasks.notification_tasks import notify as notify_task
 
-    from datetime import timedelta
-    from sqlalchemy import select
-    from app.infrastructure.persistence.database.models.notification_log import NotificationLog
-    import datetime as dt
-
-    # Détermine l'intervalle de rappel (minutes)
-    def _default_remind_minutes() -> int:
-        try:
-            return int(getattr(settings, "ALERT_REMINDER_MINUTES", 15))
-        except Exception:
-            return 15
-
-    remind_minutes = (
-        remind_after_minutes
-        if (isinstance(remind_after_minutes, int) and remind_after_minutes > 0)
-        else _default_remind_minutes()
-    )
+    remind_minutes = get_remind_minutes(remind_after_minutes)
     cooldown = timedelta(minutes=remind_minutes)
+
+    logger.info(
+        "notify_alert cooldown",
+        extra={"alert_id": str(alert_uuid), "remind_minutes": remind_minutes},
+    )
 
     try:
         with get_sync_session() as session:
-            # Récupération de l'alerte
-            alert = session.get(Alert, alert_id)
+            alert = session.get(Alert, alert_uuid)
             if not alert:
-                logger.warning(f"Alerte {alert_id} non trouvée")
+                logger.warning("Alerte %s non trouvée", alert_uuid)
                 return
 
-            # 🔎 Charger explicitement via *_id (aucune relation ORM n'est définie sur Alert)
+            if (alert.status or "").upper() != "FIRING":
+                logger.info(f"Alerte {alert_id} ignorée (status={alert.status})")
+                return
+
             machine = session.get(Machine, alert.machine_id) if alert.machine_id else None
-            metric  = session.get(Metric,  alert.metric_id)  if alert.metric_id  else None
-            threshold = session.get(Threshold, alert.threshold_id) if alert.threshold_id else None
+            metric = session.get(Metric, alert.metric_id) if alert.metric_id else None
 
-            # ✅ POLITIQUE: filtrer les sévérités notifiables
-            sev_raw = (alert.severity or "warning").lower()
-            if sev_raw not in {"warning", "critical", "error"}:
-                logger.info(f"Alerte {alert_id} ignorée (severity: {alert.severity})")
-                return
-
-            # 🔁 Contrôle de rappel anti-spam (un seul bloc)
-            # On prend la dernière notif "success" pour CETTE alerte
+            # Anti-spam cooldown: dernière réussite pour CETTE alerte (sent_at)
             last_success_ts = session.scalar(
-                select(NotificationLog.created_at)
+                select(NotificationLog.sent_at)
                 .where(
                     NotificationLog.alert_id == alert.id,
                     NotificationLog.status == "success",
+                    NotificationLog.provider == "slack",
                 )
-                .order_by(NotificationLog.created_at.desc())
+                .order_by(NotificationLog.sent_at.desc())
                 .limit(1)
             )
 
-            if last_success_ts:
-                elapsed = dt.datetime.now(dt.timezone.utc) - last_success_ts
-                if elapsed < cooldown:
-                    logger.info(
-                        "Notification skip (cooldown actif)",
-                        extra={
-                            "alert_id": str(alert.id),
-                            "elapsed_seconds": int(elapsed.total_seconds()),
-                            "cooldown_seconds": int(cooldown.total_seconds()),
-                            "remind_after_minutes": remind_minutes,
-                        },
-                    )
-                    return
-            # Sinon: aucune notif précédente -> envoi autorisé
+            last_success_ts = _as_utc(last_success_ts)
+            now_utc = dt.datetime.now(dt.timezone.utc)
+            if last_success_ts and (now_utc - last_success_ts) < cooldown:
+                logger.info(
+                    "Notification skip (cooldown actif)",
+                    extra={
+                        "alert_id": str(alert.id),
+                        "elapsed_seconds": int((now_utc - last_success_ts).total_seconds()),
+                        "cooldown_seconds": int(cooldown.total_seconds()),
+                        "remind_after_minutes": remind_minutes,
+                    },
+                )
+                return
 
-            # Construction du message (fallbacks si metric/machine absents)
+            # Message
             metric_name = getattr(metric, "name", "unknown_metric")
-            text = f"{alert.message or f'Threshold breach on {metric_name}'} - Valeur: {alert.current_value}"
+            base_msg = alert.message or f"Threshold breach on {metric_name}"
+            text = f"{base_msg} - Valeur: {alert.current_value}"
 
-            # Mappe la sévérité pour respecter le schéma de NotificationPayload (info|warning|error)
-            sev = "error" if sev_raw == "critical" else sev_raw
+            sev_raw = (alert.severity or "warning").lower()
+            sev = "error" if sev_raw == "critical" else sev_raw  # map vers info|warning|error
+
+            client_id = getattr(machine, "client_id", uuid.UUID("00000000-0000-0000-0000-000000000000"))
+            if not isinstance(client_id, uuid.UUID):
+                client_id = _coerce_uuid(client_id, default_zero=True)
 
             payload = {
-                'title': f'🚨 Alerte {sev.upper()}',
-                'text': text,
-                'severity': sev,
-                'channel': settings.SLACK_DEFAULT_CHANNEL,
-                'client_id': str(getattr(machine, "client_id", "00000000-0000-0000-0000-000000000000")),
-                'alert_id': str(alert.id),
-                'incident_id': None
+                "title": f"🚨 Alerte {sev.upper()}",
+                "text": text,
+                "severity": sev,
+                "channel": _fallback_channel(),
+                "client_id": client_id,
+                "alert_id": alert.id,
+                "incident_id": None,
             }
 
-            # 📤 Enqueue la sous-tâche notify via Celery (ne pas appeler notify() en direct)
-            notify.apply_async(kwargs={'payload': payload}, queue='notify')
+            # Enqueue la sous-tâche notify (ne pas appeler notify() direct)
+            notify_task.apply_async(kwargs={"payload": payload}, queue="notify")
             logger.info(
                 "Notification enqueued",
                 extra={"alert_id": str(alert.id), "remind_after_minutes": remind_minutes},
@@ -375,35 +398,39 @@ def notify_alert(self, alert_id: str, *, remind_after_minutes: int | None = None
         logger.error(f"Erreur notification alerte {alert_id}: {e}", exc_info=True)
         raise self.retry(exc=e)
 
+
 @shared_task(name="tasks.test_notification")
 def test_notification():
     """
-    Tâche de test pour vérifier la configuration des notifications
+    Tâche de test pour vérifier la config des notifications.
+    - Enfile une notification d'info vers le canal par défaut.
     """
     logger.info("Starting test notification task")
-    
+
     if not settings.SLACK_WEBHOOK:
         error_msg = "SLACK_WEBHOOK not configured in environment"
         logger.error(error_msg)
         return {"status": "error", "message": error_msg}
-    
+
     test_payload = {
         "title": "Test Notification",
         "text": "Ceci est un test de notification depuis le système de monitoring",
         "severity": "info",
         "channel": settings.SLACK_DEFAULT_CHANNEL,
-        "client_id": uuid.UUID('00000000-0000-0000-0000-000000000000'),  # UUID par défaut
+        "client_id": uuid.UUID("00000000-0000-0000-0000-000000000000"),
         "incident_id": None,
-        "alert_id": None
+        "alert_id": None,
     }
-    
-    logger.info("Test payload prepared", extra={"payload": test_payload})
-    
+
+    logger.info(
+        "Test payload prepared", extra={"payload": {**test_payload, "text": "[omitted]"}}
+    )
+
     try:
-        # Appeler directement la fonction notify (pas .delay)
-        result = notify(test_payload)
-        logger.info("Test notification completed", extra={"result": result})
-        return {"status": "success", "result": result}
+        # IMPORTANT: on passe par Celery (apply_async) pour respecter la signature bind=True
+        res = notify.apply_async(kwargs={"payload": test_payload}, queue="notify")
+        logger.info("Test notification enqueued", extra={"task_id": res.id})
+        return {"status": "enqueued", "task_id": res.id}
     except Exception as e:
         logger.error("Test notification failed", extra={"error": str(e)}, exc_info=True)
         return {"status": "error", "message": str(e)}

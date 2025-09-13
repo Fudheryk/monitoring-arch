@@ -9,13 +9,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.infrastructure.persistence.database.base import Base
 import datetime as dt
 
-import datetime as dt
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.persistence.database.base import Base
 
 class Sample(Base):
     __tablename__ = "samples"

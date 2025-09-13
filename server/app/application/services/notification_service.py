@@ -9,13 +9,8 @@ from app.core.config import settings
 import logging
 import httpx
 
-import logging
 
-import httpx
 
-from app.infrastructure.persistence.database.session import get_sync_session
-from app.infrastructure.persistence.database.models.client_settings import ClientSettings
-from app.core.config import settings
 
 log = logging.getLogger(__name__)
 

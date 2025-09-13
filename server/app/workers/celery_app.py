@@ -7,7 +7,6 @@ from celery import Celery
 
 from app.core.config import settings
 from celery.schedules import crontab
-from app.core.config import settings
 
 celery = Celery("monitoring", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
 

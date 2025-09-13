@@ -7,10 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.infrastructure.persistence.database.models.api_key import ApiKey
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from app.infrastructure.persistence.database.models.api_key import ApiKey
 
 class ApiKeyRepository:
     def __init__(self, session: Session):

@@ -7,10 +7,7 @@ from datetime import datetime, timezone
 from app.infrastructure.persistence.database.session import get_sync_session
 from app.infrastructure.persistence.repositories.machine_repository import MachineRepository
 
-from datetime import datetime, timezone
 
-from app.infrastructure.persistence.database.session import get_sync_session
-from app.infrastructure.persistence.repositories.machine_repository import MachineRepository
 
 def ensure_machine(machine_info, api_key_obj):
     with get_sync_session() as session:

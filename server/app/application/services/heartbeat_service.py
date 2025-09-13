@@ -10,14 +10,6 @@ from app.infrastructure.persistence.database.session import get_sync_session
 from app.infrastructure.persistence.database.models.machine import Machine
 from app.infrastructure.persistence.repositories.incident_repository import IncidentRepository
 
-from datetime import datetime, timezone, timedelta
-
-from sqlalchemy import select
-from app.core.config import settings
-from app.infrastructure.persistence.database.session import get_sync_session
-from app.infrastructure.persistence.database.models.machine import Machine
-from app.infrastructure.persistence.repositories.incident_repository import IncidentRepository
-
 def check_offline() -> int:
     now = datetime.now(timezone.utc)
     limit = now - timedelta(minutes=settings.NO_DATA_MINUTES)

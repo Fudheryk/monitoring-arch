@@ -5,7 +5,6 @@ on:
     branches: [ main ]
   pull_request:
 
-# Évite les exécutions parallèles sur la même branche
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -13,6 +12,15 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    env:
+      # Empêche tout vrai envoi Slack côté tests unitaires/integration/e2e
+      STUB_SLACK: "1"
+      # Cooldown court pour les tests
+      ALERT_REMINDER_MINUTES: "1"
+      # Clé API par défaut utilisée dans les scripts/tests
+      KEY: dev-apikey-123
+      API: http://localhost:8000
 
     steps:
       - name: Checkout
@@ -23,7 +31,6 @@ jobs:
           docker --version
           docker compose version || true
 
-      # (Optionnel mais sûr) jq est utilisé par le script de smoke
       - name: Ensure curl + jq are present
         run: |
           sudo apt-get update -y
@@ -34,12 +41,28 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install pytest + requests
+      - name: Install project deps (unit tests)
         run: |
           python -m pip install --upgrade pip
-          pip install pytest requests
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          else
+            pip install pytest requests
+          fi
 
-      # IMPORTANT : Compose (dans docker/) référence ../.env  -> on crée .env à la racine
+      - name: Show pytest version
+        run: pytest --version
+
+      # ---------- UNIT TESTS (sans Docker) ----------
+      - name: Run unit tests (no Docker, Celery eager, Slack stub)
+        env:
+          CELERY_TASK_ALWAYS_EAGER: "1"
+          STUB_SLACK: "1"
+          ALERT_REMINDER_MINUTES: "1"
+        run: |
+          pytest -q -m "unit" --maxfail=1
+
+      # ---------- STACK DOCKER POUR INTEGRATION/E2E ----------
       - name: Prepare root .env from example
         run: |
           if [ -f .env.example ]; then
@@ -48,6 +71,20 @@ jobs:
             echo "ERROR: .env.example is missing at repo root" >&2
             exit 1
           fi
+          # On s’assure que ces variables existent/écrasent pour les containers
+          # (pydantic-settings lit d’abord l’env du process, puis .env ; on force .env)
+          awk 'BEGIN{printed_slack=0; printed_reminder=0} 
+               /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; printed_slack=1; next}
+               /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; printed_reminder=1; next}
+               {print}
+               END{
+                 if(!printed_slack)    print "SLACK_WEBHOOK=http://httpbin:80/status/204";
+                 if(!printed_reminder) print "ALERT_REMINDER_MINUTES=1";
+                 print "STUB_SLACK=1";
+               }' .env > .env.ci
+          mv .env.ci .env
+          echo "---- .env used in CI ----"
+          sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env
 
       - name: Start stack (docker compose)
         working-directory: docker
@@ -68,14 +105,7 @@ jobs:
           echo "API not healthy" >&2
           exit 1
 
-      - name: Run integration tests (pytest)
-        env:
-          API: http://localhost:8000
-          KEY: dev-apikey-123
-        run: |
-          pytest -q server/tests/test_http_targets_integration.py
-
-      - name: Run smoke tests (bash)
+      - name: Smoke HTTP targets (bash)
         env:
           API: http://localhost:8000
           KEY: dev-apikey-123
@@ -83,6 +113,32 @@ jobs:
           chmod +x scripts/smoke_http_targets.sh
           ./scripts/smoke_http_targets.sh
 
+      - name: Show queues / tasks (debug)
+        working-directory: docker
+        run: |
+          docker compose exec -T worker celery -A app.workers.celery_app inspect active_queues || true
+          docker compose exec -T worker celery -A app.workers.celery_app inspect registered || true
+
+      # ---------- INTEGRATION & E2E TESTS ----------
+      - name: Run integration tests (pytest -m integration)
+        env:
+          API: http://localhost:8000
+          KEY: dev-apikey-123
+          STUB_SLACK: "1"
+          ALERT_REMINDER_MINUTES: "1"
+        run: |
+          pytest -q -m "integration" --maxfail=1
+
+      - name: Run E2E tests (pytest -m e2e)
+        env:
+          API: http://localhost:8000
+          KEY: dev-apikey-123
+          STUB_SLACK: "1"
+          ALERT_REMINDER_MINUTES: "1"
+        run: |
+          pytest -q -m "e2e" --maxfail=1
+
+      # ---------- LOGS & TEARDOWN ----------
       - name: Dump docker logs on failure
         if: failure()
         working-directory: docker
@@ -91,7 +147,7 @@ jobs:
           echo "----- api logs -----"
           docker compose logs api | tail -n 400 || true
           echo "----- worker logs -----"
-          docker compose logs worker | tail -n 200 || true
+          docker compose logs worker | tail -n 400 || true
           echo "----- db logs -----"
           docker compose logs db | tail -n 200 || true
 
