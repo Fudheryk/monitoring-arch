@@ -29,4 +29,7 @@ build/
 .idea/
 .DS_Store
 
+# Ruff cache
+.ruff_cache
+
 server/celerybeat-schedule
