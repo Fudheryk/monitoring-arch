@@ -70,17 +70,15 @@ jobs:
           fi
           # Forcer certaines variables pour tests CI
           awk 'BEGIN{printed_slack=0; printed_reminder=0} 
-               /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; printed_slack=1; next}
-               /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; printed_reminder=1; next}
-               {print}
-               END{
-                 if(!printed_slack)    print "SLACK_WEBHOOK=http://httpbin:80/status/204";
-                 if(!printed_reminder) print "ALERT_REMINDER_MINUTES=1";
-                 print "STUB_SLACK=1";
-               }' .env > .env.ci
+              /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; printed_slack=1; next}
+              /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; printed_reminder=1; next}
+              {print}
+              END{
+                if(!printed_slack)    print "SLACK_WEBHOOK=http://httpbin:80/status/204";
+                if(!printed_reminder) print "ALERT_REMINDER_MINUTES=1";
+                print "STUB_SLACK=1";
+              }' .env > .env.ci
           mv .env.ci .env
-          echo "---- .env used in CI ----"
-          sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env
 
       # ---------- START DOCKER STACK ----------
       - name: Start stack (docker compose)
@@ -150,6 +148,5 @@ jobs:
       - name: Stop stack
         if: always()
         working-directory: docker
-        run: |
-          cp ../.env .env || true
-          docker compose --env-file .env down -v
+        run: docker compose --env-file ../.env down -v
+

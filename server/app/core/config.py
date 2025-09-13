@@ -8,7 +8,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+    DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@db:5432/monitoring"
     REDIS_URL: str = "redis://redis:6379/0"
     JWT_SECRET: str = "change-me"
     NO_DATA_MINUTES: int = 5
