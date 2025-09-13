@@ -95,9 +95,16 @@ jobs:
           docker compose --env-file ../.env up -d --build
           docker compose ps
 
+      - name: Wait for DB
+        run: |
+          for i in {1..30}; do
+            docker compose exec -T db pg_isready -U postgres && break
+            sleep 2
+          done
+
       - name: Run Alembic migrations
         working-directory: docker
-        run: docker compose exec -T api alembic upgrade head
+        run: docker compose run --rm api alembic upgrade head
 
       - name: Wait for API to be healthy
         run: |

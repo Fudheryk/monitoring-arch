@@ -1,9 +1,0 @@
-SQLAlchemy>=1.4
-psycopg2-binary
-fastapi
-uvicorn
-celery
-redis
-alembic
-httpx
-pydantic-settings

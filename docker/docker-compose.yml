@@ -22,18 +22,26 @@ services:
     environment:
       API_COVERAGE: "${API_COVERAGE:-0}"
       COVERAGE_RCFILE: "/app/.coveragerc"
-    ports: ["8000:8000"]
+      DATABASE_URL: "${DATABASE_URL:-postgresql+psycopg2://postgres:postgres@db:5432/monitoring}"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      STUB_SLACK: "1"
+      ALERT_REMINDER_MINUTES: "1"
+    ports:
+      - "8000:8000"
     volumes:
-      - ../server:/app/server
+      - ../server:/app/server:cached
       - ../.coveragerc:/app/.coveragerc:ro
-    stop_signal: SIGINT       
+    stop_signal: SIGINT
     stop_grace_period: 20s
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/api/v1/health').getcode()==200 else sys.exit(1)"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
       interval: 10s
-      timeout: 3s
+      timeout: 5s
       retries: 5
-
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   worker:
     <<: *app-common
@@ -60,10 +68,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    ports: ["5432:5432"]   # retirer cette ligne si l'accès direct depuis l'hôte n'est pas nécessaire
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   redis:
     image: redis:7
