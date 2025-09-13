@@ -150,4 +150,6 @@ jobs:
       - name: Stop stack
         if: always()
         working-directory: docker
-        run: docker compose --env-file ../.env down -v
+        run: |
+          cp ../.env .env || true
+          docker compose --env-file .env down -v

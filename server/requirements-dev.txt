@@ -6,3 +6,5 @@ requests
 black
 ruff
 sqlalchemy
+pydantic-settings
+psycopg2-binary
