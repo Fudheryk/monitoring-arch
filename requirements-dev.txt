@@ -1,0 +1,10 @@
+-r requirements.txt
+pytest
+pytest-cov
+httpx
+requests
+black
+ruff
+sqlalchemy
+pydantic-settings
+psycopg2-binary
