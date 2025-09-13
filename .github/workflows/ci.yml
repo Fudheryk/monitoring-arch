@@ -68,6 +68,7 @@ jobs:
             echo "ERROR: .env.example is missing at repo root" >&2
             exit 1
           fi
+
           # Forcer certaines variables pour tests CI
           awk 'BEGIN{printed_slack=0; printed_reminder=0} 
               /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; printed_slack=1; next}
@@ -79,6 +80,12 @@ jobs:
                 print "STUB_SLACK=1";
               }' .env > .env.ci
           mv .env.ci .env
+
+          # Copier .env dans docker/ pour que docker compose le voie
+          cp .env docker/.env
+
+          echo "---- .env used in CI ----"
+          sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env
 
       # ---------- START DOCKER STACK ----------
       - name: Start stack (docker compose)
@@ -148,5 +155,6 @@ jobs:
       - name: Stop stack
         if: always()
         working-directory: docker
-        run: docker compose --env-file ../.env down -v
+        run: docker compose --env-file .env down -v
+
 
