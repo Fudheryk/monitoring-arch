@@ -1,24 +1,35 @@
-# server/Dockerfile.dev
-# Image "dev" (editable install + extras) avec coverage pour l’API_COVERAGE=1.
-
+# ---------- IMAGE DEV ----------
 FROM python:3.11-slim-bookworm
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONPATH=/app/server DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends curl build-essential gcc \
- && rm -rf /var/lib/apt/lists/*
 
-# Utilisateur non-root
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/app/server \
+    DEBIAN_FRONTEND=noninteractive
+
+# Installer outils nécessaires au dev et compilations
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl build-essential gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Créer utilisateur non-root
 RUN useradd -ms /bin/bash appuser
 
 WORKDIR /app/server
 
-COPY server/pyproject.toml /app/server/
-RUN pip install --upgrade pip wheel setuptools
+# Copier requirements dev et installer toutes les dépendances
+COPY requirements-dev.txt requirements.txt ./
+RUN pip install --upgrade pip
+RUN pip install -r requirements-dev.txt
+
+# Copier le code serveur
 COPY server /app/server
 
-# Install en mode dev + coverage
-RUN pip install --no-cache-dir -e .[dev] \
- && pip install --no-cache-dir coverage
+# Installer l'app en editable avec extras dev + coverage
+RUN pip install -e .[dev] \
+    && pip install --no-cache-dir coverage
 
+# Entrypoint et permissions
 COPY server/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && chown -R appuser:appuser /app
 

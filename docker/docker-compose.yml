@@ -1,19 +1,20 @@
 x-app-common: &app-common
   build:
-    context: ..
-    dockerfile: ./server/Dockerfile
-  env_file: ../.env
+    context: ..                     # Context racine du projet
+    dockerfile: ./server/Dockerfile # Dockerfile pour l'app (prod ou dev)
+  env_file: ../.env                 # Variables d'environnement
   working_dir: /app/server
+  # Volumes → utiles seulement en dev pour hot reload / couverture
+  # À ne pas monter en prod
   volumes:
-    # Pratique en dev (hot reload). En prod, supprimer ce montage.
-    - ../server:/app/server
+    - ../server:/app/server         # Montage du code source
     - ../.coveragerc:/app/.coveragerc:ro
   depends_on:
     db:
       condition: service_healthy
     redis:
       condition: service_healthy
-  restart: unless-stopped
+  restart: unless-stopped           # Redémarrage automatique si container tombe
 
 services:
   api:

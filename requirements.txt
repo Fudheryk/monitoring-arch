@@ -6,4 +6,3 @@ celery
 redis
 alembic
 httpx
-pydantic-settings
