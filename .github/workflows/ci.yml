@@ -56,6 +56,7 @@ jobs:
           CELERY_TASK_ALWAYS_EAGER: "1"
           STUB_SLACK: "1"
           ALERT_REMINDER_MINUTES: "1"
+          SLACK_WEBHOOK: "http://httpbin:80/status/204"
         run: |
           pytest -q -m "unit" --cov=server/app --cov-config=.coveragerc --cov-report=term-missing --maxfail=1
 
@@ -155,6 +156,7 @@ jobs:
       - name: Stop stack
         if: always()
         working-directory: docker
-        run: docker compose --env-file .env down -v
+        run: docker compose --env-file ../.env down -v
+
 
 
