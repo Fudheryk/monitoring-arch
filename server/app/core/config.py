@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     SLACK_WEBHOOK: Optional[str] = None
     SLACK_DEFAULT_CHANNEL: str = "#notif-webhook"
     CORS_ALLOW_ORIGINS: Optional[str] = None
+    STUB_SLACK: bool = False
     
     model_config = SettingsConfigDict(
         env_file=".env",
