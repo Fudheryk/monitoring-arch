@@ -49,14 +49,7 @@ jobs:
       - name: Install project deps (unit tests)
         run: |
           python -m pip install --upgrade pip
-          # Installer depuis server/requirements-dev.txt
-          if [ -f server/requirements-dev.txt ]; then
-            pip install -r server/requirements-dev.txt
-          else
-            # fallback minimal
-            pip install pytest requests pytest-cov
-          fi
-
+          pip install -r server/requirements-dev.txt
       - name: Show pytest version
         run: pytest --version
 
@@ -67,7 +60,6 @@ jobs:
           STUB_SLACK: "1"
           ALERT_REMINDER_MINUTES: "1"
         run: |
-          # Ajouter coverage pour unit tests
           pytest -q -m "unit" --cov=server/app --cov-config=.coveragerc --cov-report=term-missing --maxfail=1
 
       # ---------- STACK DOCKER POUR INTEGRATION/E2E ----------
@@ -161,4 +153,4 @@ jobs:
       - name: Stop stack
         if: always()
         working-directory: docker
-        run: docker compose down -v
+        run: docker compose --env-file ../.env down -v
