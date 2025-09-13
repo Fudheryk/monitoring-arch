@@ -14,11 +14,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # Empêche tout vrai envoi Slack côté tests unitaires/integration/e2e
       STUB_SLACK: "1"
-      # Cooldown court pour les tests
       ALERT_REMINDER_MINUTES: "1"
-      # Clé API par défaut utilisée dans les scripts/tests
       KEY: dev-apikey-123
       API: http://localhost:8000
 
@@ -45,7 +42,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ---------- INSTALL DEPENDENCIES ----------
+      # ---------- INSTALL DEPENDENCIES (DEV) ----------
       - name: Install project deps (unit tests)
         run: |
           python -m pip install --upgrade pip
@@ -53,8 +50,8 @@ jobs:
       - name: Show pytest version
         run: pytest --version
 
-      # ---------- UNIT TESTS (sans Docker) ----------
-      - name: Run unit tests (no Docker, Celery eager, Slack stub)
+      # ---------- UNIT TESTS ----------
+      - name: Run unit tests (no Docker)
         env:
           CELERY_TASK_ALWAYS_EAGER: "1"
           STUB_SLACK: "1"
@@ -62,7 +59,7 @@ jobs:
         run: |
           pytest -q -m "unit" --cov=server/app --cov-config=.coveragerc --cov-report=term-missing --maxfail=1
 
-      # ---------- STACK DOCKER POUR INTEGRATION/E2E ----------
+      # ---------- PREPARE .ENV ----------
       - name: Prepare root .env from example
         run: |
           if [ -f .env.example ]; then
@@ -73,23 +70,26 @@ jobs:
           fi
           # Forcer certaines variables pour tests CI
           awk 'BEGIN{printed_slack=0; printed_reminder=0} 
-              /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; printed_slack=1; next}
-              /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; printed_reminder=1; next}
-              {print}
-              END{
-                if(!printed_slack)    print "SLACK_WEBHOOK=http://httpbin:80/status/204";
-                if(!printed_reminder) print "ALERT_REMINDER_MINUTES=1";
-                print "STUB_SLACK=1";
-              }' .env > .env.ci
+               /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; printed_slack=1; next}
+               /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; printed_reminder=1; next}
+               {print}
+               END{
+                 if(!printed_slack)    print "SLACK_WEBHOOK=http://httpbin:80/status/204";
+                 if(!printed_reminder) print "ALERT_REMINDER_MINUTES=1";
+                 print "STUB_SLACK=1";
+               }' .env > .env.ci
           mv .env.ci .env
+          echo "---- .env used in CI ----"
+          sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env
 
+      # ---------- START DOCKER STACK ----------
       - name: Start stack (docker compose)
         working-directory: docker
         run: |
-          docker compose up -d --build
+          docker compose --env-file ../.env up -d --build
           docker compose ps
 
-      - name: Run Alembic migrations (in container)
+      - name: Run Alembic migrations
         working-directory: docker
         run: docker compose exec -T api alembic upgrade head
 
@@ -102,7 +102,8 @@ jobs:
           echo "API not healthy" >&2
           exit 1
 
-      - name: Smoke HTTP targets (bash)
+      # ---------- SMOKE TESTS ----------
+      - name: Smoke HTTP targets
         env:
           API: http://localhost:8000
           KEY: dev-apikey-123
@@ -110,14 +111,15 @@ jobs:
           chmod +x scripts/smoke_http_targets.sh
           ./scripts/smoke_http_targets.sh
 
-      - name: Show queues / tasks (debug)
+      # ---------- DEBUG CELERY ----------
+      - name: Show queues / tasks
         working-directory: docker
         run: |
           docker compose exec -T worker celery -A app.workers.celery_app inspect active_queues || true
           docker compose exec -T worker celery -A app.workers.celery_app inspect registered || true
 
-      # ---------- INTEGRATION & E2E TESTS ----------
-      - name: Run integration tests (pytest -m integration)
+      # ---------- INTEGRATION / E2E TESTS ----------
+      - name: Run integration tests
         env:
           API: http://localhost:8000
           KEY: dev-apikey-123
@@ -126,7 +128,7 @@ jobs:
         run: |
           pytest -q -m "integration" --cov=server/app --cov-config=.coveragerc --cov-report=term-missing --maxfail=1
 
-      - name: Run E2E tests (pytest -m e2e)
+      - name: Run E2E tests
         env:
           API: http://localhost:8000
           KEY: dev-apikey-123
@@ -141,18 +143,11 @@ jobs:
         working-directory: docker
         run: |
           docker compose ps || true
-          echo "----- api logs -----"
           docker compose logs api | tail -n 400 || true
-          echo "----- worker logs -----"
           docker compose logs worker | tail -n 400 || true
-          echo "----- db logs -----"
           docker compose logs db | tail -n 200 || true
 
       - name: Stop stack
         if: always()
         working-directory: docker
-        run: |
-          if [ ! -f .env ]; then
-            cp ../.env .env
-          fi
-          docker compose --env-file .env down -v
+        run: docker compose --env-file ../.env down -v
