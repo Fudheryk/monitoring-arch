@@ -1,15 +1,17 @@
 # ---------- IMAGE DEV ----------
 FROM python:3.11-slim-bookworm
 
+# Variables d'environnement Python
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive \
     PYTHONPATH=/app/server \
-    DEBIAN_FRONTEND=noninteractive
+    PATH=/usr/local/bin:$PATH
 
-# Installer outils nécessaires au dev et compilations
+# Installer outils nécessaires au dev + compilations
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl build-essential gcc \
+        build-essential gcc curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Créer utilisateur non-root
@@ -17,22 +19,25 @@ RUN useradd -ms /bin/bash appuser
 
 WORKDIR /app/server
 
-# Copier requirements dev et installer toutes les dépendances
+# Copier requirements dev et installer toutes les dépendances dev
 COPY requirements-dev.txt requirements.txt ./
 RUN pip install --upgrade pip
 RUN pip install -r requirements-dev.txt
 
-# Copier le code serveur
+# Copier le code source
 COPY server /app/server
 
 # Installer l'app en editable avec extras dev + coverage
-RUN pip install -e .[dev] \
+RUN pip install -e ".[dev]" \
     && pip install --no-cache-dir coverage
 
-# Entrypoint et permissions
+# Copier l'entrypoint et fixer les permissions
 COPY server/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && chown -R appuser:appuser /app
 
+# Switch user non-root
 USER appuser
+
 EXPOSE 8000
+
 ENTRYPOINT ["/entrypoint.sh"]

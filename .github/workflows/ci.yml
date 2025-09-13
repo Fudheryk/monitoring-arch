@@ -103,7 +103,7 @@ jobs:
 
       - name: Run Alembic migrations
         working-directory: docker
-        run: docker compose --env-file ../.env run --rm api alembic upgrade head
+        run: docker compose run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
 
       - name: Wait for API to be healthy
         run: |
