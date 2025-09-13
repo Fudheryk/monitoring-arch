@@ -20,6 +20,7 @@ services:
   api:
     <<: *app-common
     command: ["api"]
+    working_dir: /app/server
     environment:
       API_COVERAGE: "${API_COVERAGE:-0}"
       COVERAGE_RCFILE: "/app/.coveragerc"
