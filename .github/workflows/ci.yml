@@ -91,21 +91,18 @@ jobs:
       # ---------- START DOCKER STACK ----------
       - name: Start stack (docker compose)
         working-directory: docker
-        run: |
-          docker compose --env-file ../.env up -d --build
-          docker compose ps
+        run: docker compose --env-file ../.env up -d --build
 
       - name: Wait for DB
         run: |
           for i in {1..30}; do
-            docker compose run --rm --env-file ../.env db pg_isready -U postgres && break
-            echo "Waiting for DB..."
+            docker compose exec db pg_isready -U postgres && break
             sleep 2
           done
 
       - name: Run Alembic migrations
         working-directory: docker
-        run: docker compose run --rm --env-file ../.env api alembic upgrade head
+        run: docker compose run --rm api alembic upgrade head
 
       - name: Wait for API to be healthy
         run: |
