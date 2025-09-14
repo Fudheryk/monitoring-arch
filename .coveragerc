@@ -2,6 +2,8 @@
 [run]
 source = app
 branch = True
+parallel = True
+concurrency = multiprocessing
 omit =
     */__init__.py
     server/app/main.py

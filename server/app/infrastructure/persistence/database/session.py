@@ -17,8 +17,18 @@ _SessionLocal: sessionmaker | None = None
 def init_engine() -> None:
     global _engine
     if _engine is None:
-        _engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+        # 1) Assure que l’URL contient connect_timeout (si absent)
+        url = settings.DATABASE_URL
+        if "connect_timeout=" not in url:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}connect_timeout={settings.DB_CONNECT_TIMEOUT}"
 
+        # 2) Passe aussi par connect_args (ceinture + bretelles)
+        _engine = create_engine(
+            url,
+            pool_pre_ping=True,
+            connect_args={"connect_timeout": settings.DB_CONNECT_TIMEOUT},
+        )
 
 def init_sessionmaker() -> None:
     global _SessionLocal

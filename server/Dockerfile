@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/server \
     PATH=/usr/local/bin:$PATH
 
-# Installer runtime essentials et outils de compilation pour psycopg2
+# Installer runtime essentials et outils de compilation pour psycopg
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential gcc curl \
     && rm -rf /var/lib/apt/lists/*

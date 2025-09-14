@@ -5,26 +5,27 @@ from __future__ import annotations
 Service de monitoring HTTP :
 
 - sélectionne les cibles « dues » (actives ET intervalle écoulé)
-- exécute la requête HTTP avec méthode/timeout
+- exécute la requête HTTP avec méthode/timeout (via un *wrapper* patchable `http_get`)
 - met à jour les champs last_* (status_code, latency, erreur)
 - ouvre/résout des incidents via le repository dédié
 
 Notes importantes :
 - On utilise **get_sync_session** (et pas get_db), car ce service n'est pas un endpoint FastAPI.
-  → Tes tests unitaires patchent précisément `get_sync_session`.
+  → Les tests unitaires/integ patchent `get_sync_session`.
+- On expose **http_get(...)** au niveau module pour permettre aux tests E2E de le monkeypatcher
+  (ils l’attendaient déjà : cf. test_e2e_incident_lifecycle).
 """
 
 import uuid
-
-from datetime import datetime, timezone, timedelta
-from typing import Optional
 import logging
 import time
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 import httpx
 from sqlalchemy import select
 
-from app.core.config import settings  # <-- pour savoir si SLACK_WEBHOOK est configuré
+from app.core.config import settings
 from app.infrastructure.persistence.database.session import get_sync_session
 from app.infrastructure.persistence.database.models.http_target import HttpTarget
 from app.infrastructure.persistence.database.models.notification_log import NotificationLog
@@ -36,8 +37,28 @@ logger = logging.getLogger(__name__)
 DEFAULT_METHOD = "GET"
 INCIDENT_TITLE_PREFIX = "HTTP check failed: "
 
+__all__ = [
+    "check_http_targets",
+    "check_one_target",
+    "http_get",  # ← exposé pour les tests E2E (monkeypatch)
+]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Utilitaires internes
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _as_utc(d: datetime | None) -> datetime | None:
+    """Retourne d en timezone UTC 'aware' (tolère None)."""
+    if d is None:
+        return None
+    if d.tzinfo is None:
+        return d.replace(tzinfo=timezone.utc)
+    return d.astimezone(timezone.utc)
+
 
 def _should_check(t: HttpTarget, now: datetime) -> bool:
+    """Une cible est « due » si active et si l’intervalle depuis last_check_at est écoulé."""
     if not t.is_active:
         return False
     last = _as_utc(t.last_check_at)
@@ -45,22 +66,6 @@ def _should_check(t: HttpTarget, now: datetime) -> bool:
         return True
     interval = timedelta(seconds=t.check_interval_seconds or 300)
     return (_as_utc(now) - last) >= interval
-
-
-def _perform_check(t: HttpTarget) -> tuple[Optional[int], Optional[int], Optional[str]]:
-    """Exécute la requête HTTP et retourne (status_code, response_time_ms, error_message)."""
-    timeout_seconds = t.timeout_seconds or 30
-    method = (t.method or DEFAULT_METHOD).upper()
-    started = time.perf_counter()
-
-    try:
-        with httpx.Client(timeout=timeout_seconds, follow_redirects=True) as client:
-            resp = client.request(method, t.url)
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        return resp.status_code, elapsed_ms, None
-    except Exception as exc:  # noqa: BLE001
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        return None, elapsed_ms, str(exc)
 
 
 def _update_result(t: HttpTarget, status: Optional[int], elapsed_ms: Optional[int], err: Optional[str]) -> None:
@@ -72,6 +77,7 @@ def _update_result(t: HttpTarget, status: Optional[int], elapsed_ms: Optional[in
 
 
 def _incident_cooldown_ok(db, incident_id, remind_minutes: int) -> bool:
+    """Retourne True si aucune notif « success » récente (< remind_minutes) n’existe pour cet incident."""
     now = datetime.now(timezone.utc)
     last_sent = db.scalar(
         select(NotificationLog.sent_at)
@@ -101,18 +107,47 @@ def _enqueue_incident_notification(incident, *, severity: str, text: str) -> Non
     notify_task.apply_async(kwargs={"payload": payload}, queue="notify")
 
 
-def _as_utc(d: datetime | None) -> datetime | None:
-    """Retourne d en timezone UTC 'aware' (tolère None)."""
-    if d is None:
-        return None
-    if d.tzinfo is None:
-        return d.replace(tzinfo=timezone.utc)
-    return d.astimezone(timezone.utc)
+# ──────────────────────────────────────────────────────────────────────────────
+# Wrapper HTTP patchable par les tests (E2E attend ce symbole)
+# ──────────────────────────────────────────────────────────────────────────────
 
+def http_get(url: str, method: str = "GET", timeout: int | float = 10):
+    """
+    Effectue la requête HTTP et renvoie un objet possédant au minimum `.status_code`.
+    Conçu pour être *monkeypatché* dans les tests E2E.
+    """
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        return client.request(method, url)
+
+
+def _perform_check(t: HttpTarget) -> tuple[Optional[int], Optional[int], Optional[str]]:
+    """
+    Exécute la requête HTTP (via http_get) et retourne:
+      (status_code | None, response_time_ms | None, error_message | None)
+    """
+    timeout_seconds = t.timeout_seconds or 30
+    method = (t.method or DEFAULT_METHOD).upper()
+    started = time.perf_counter()
+
+    try:
+        resp = http_get(t.url, method=method, timeout=timeout_seconds)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return getattr(resp, "status_code", None), elapsed_ms, None
+    except Exception as exc:  # noqa: BLE001
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return None, elapsed_ms, str(exc)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# API principale du service
+# ──────────────────────────────────────────────────────────────────────────────
 
 def check_http_targets() -> int:
     """
     Parcourt les cibles HTTP actives « dues » et retourne le nombre de checks effectués.
+    - Ouvre un incident si le statut est inattendu (ou erreur réseau).
+    - Résout l’incident si le statut redevient attendu.
+    - Applique le *cooldown* de notification via NotificationLog.
     """
     updated = 0
     now = datetime.now(timezone.utc)
@@ -174,8 +209,7 @@ def check_http_targets() -> int:
                             }},
                             queue="notify",
                         )
-
-        if updated:
+            # Commit après chaque cible pour minimiser les verrous
             s.commit()
 
     logger.info("HTTP monitor: %d cible(s) vérifiée(s).", updated)
@@ -185,6 +219,12 @@ def check_http_targets() -> int:
 def check_one_target(target_id: str) -> dict:
     """
     Check manuel d’une seule cible — pratique pour UI/debug/tests d’intégration.
+    Retourne un dict avec clés:
+      - ok: bool
+      - status: int | None
+      - ms: int | None
+      - error: str | None
+      - expected: int | None
     """
     try:
         tid = target_id if isinstance(target_id, uuid.UUID) else uuid.UUID(str(target_id))
@@ -192,7 +232,7 @@ def check_one_target(target_id: str) -> dict:
         return {"ok": False, "reason": "bad_id"}
 
     with get_sync_session() as s:
-        t = s.get(HttpTarget, tid)  # <-- utiliser l’UUID converti
+        t = s.get(HttpTarget, tid)
         if not t:
             return {"ok": False, "reason": "not_found"}
 

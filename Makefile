@@ -16,8 +16,8 @@ COV ?= 70   # seuil de couverture combinée (host + API)
         lint fmt \
         stack-up stack-down migrate \
         restart rebuild rebuild-nocache \
-        ps logs shell-api shell-worker health \
-        cov-all cov-host cov-api-up cov-api-down cov-api-pull cov-combine cov-clean cov-html
+        ps logs shell-api shell-worker health smoke-http-targets \
+        cov-all cov-host cov-api-up cov-api-down cov-api-pull cov-combine cov-clean cov-html verify
 
 # ---------------------------
 # Tests
@@ -100,51 +100,87 @@ shell-worker:
 health:
 	@curl -sf $(API)/api/v1/health && echo "health OK" || (echo "health FAIL" && exit 1)
 
+smoke-http-targets:
+	@API?=http://localhost:8000 KEY?=dev-apikey-123 ./scripts/smoke_http_targets.sh
+
 # ---------------------------
-# Coverage (host + API Docker)
+# Coverage (host + API Docker [+ worker])
 # ---------------------------
 
+# Démarrage optionnel du worker sous coverage : WITH_WORKER=1 make cov-all
+WITH_WORKER ?= 0
+# Timeouts SQL défensifs côté host durant les tests
+PGOPTIONS ?= -c lock_timeout=5s -c statement_timeout=60000
+
+# Nettoyage des artefacts de coverage
 cov-clean:
-	rm -f .coverage coverage.xml coverage-combined.xml
+	rm -f .coverage .coverage.host coverage.xml coverage-combined.xml
 	rm -rf htmlcov
-	# important: supprimer aussi l’ancienne data API s’il y en a
-	rm -f server/.coverage
+	# Important : supprimer aussi les anciennes data côté conteneurs montées dans /app/server
+	rm -f server/.coverage server/.coverage.api server/.coverage.worker
 
-# Démarre l’API sous coverage et attend qu’elle soit healthy
+# Monte DB/Redis/API (et worker) SOUS COVERAGE et attend l'API
+# - API_COVERAGE est lu par l'image/entrypoint : si =1, l'API démarre sous coverage et écrit /app/server/.coverage.api
+# - WORKER_COVERAGE idem pour le worker, qui écrit /app/server/.coverage.worker*
+# - COVERAGE_FILE permet de nommer les fichiers émis par chaque service (utile pour les distinguer)
 cov-api-up:
-	API_COVERAGE=1 $(COMPOSE) up -d db redis api
+	API_COVERAGE=1 COVERAGE_FILE=/app/server/.coverage.api $(COMPOSE) up -d db redis api
 	@echo "⏳ Attente de l'API (healthcheck Docker)…"
 	@for i in $$(seq 1 30); do \
 		docker inspect --format='{{json .State.Health.Status}}' $$($(COMPOSE) ps -q api) 2>/dev/null | grep -q healthy && exit 0; \
 		sleep 1; \
 	done; \
 	echo "❌ API unhealthy"; exit 1
+	@if [ "$(WITH_WORKER)" = "1" ]; then \
+		echo "▶️  Lancement du worker sous coverage…"; \
+		WORKER_COVERAGE=1 COVERAGE_FILE=/app/server/.coverage.worker $(COMPOSE) up -d worker; \
+	fi
 
-# Tests côté hôte (produit ./.coverage)
+# (Optionnel) migrations pour assurer que l'API a le schéma attendu
+cov-migrate:
+	$(COMPOSE) exec -T api alembic upgrade head
+
+# Tests côté hôte (produit ./.coverage.host)
 cov-host:
 	INTEG_STACK_UP=1 API=$(API) KEY=$(KEY) \
-		$(PYTEST) -m "unit or integration" -vv -rA \
-		--cov=server/app --cov-branch --cov-report=term-missing
+	PGOPTIONS="$(PGOPTIONS)" \
+	PYTEST_ADDOPTS="--timeout=120 --timeout-method=thread" \
+	COVERAGE_FILE=.coverage.host COVERAGE_RCFILE=.coveragerc \
+	$(PYTEST) -vv -rA -m "unit or integration" \
+	  --cov=server/app --cov-branch --cov-report=term-missing \
+	  --cov-fail-under=0
 
-# Stoppe uniquement l’API (SIGINT → coverage écrit server/.coverage)
+# Stoppe les services qui écrivent du coverage pour flusher les fichiers
 cov-api-down:
-	$(COMPOSE) stop api
+	$(COMPOSE) stop api || true
+	@if [ "$(WITH_WORKER)" = "1" ]; then \
+		$(COMPOSE) stop worker || true; \
+	fi
 
-# Combine HOST + API si disponibles ; sinon fallback HOST seul
+# Combine HOST + API (+ WORKER si présent) puis génère rapport + XML
+# - On tolère l'absence de certains fichiers (selon ce qui a tourné)
+# - On applique un seuil global (--fail-under)
 cov-combine:
 	@set -euo pipefail; \
-	test -s .coverage || { echo "❌ .coverage hôte manquant ou vide"; exit 1; }; \
-	if test -s server/.coverage; then \
-	  echo "⏳ Combine coverage (host + API)…"; \
-	  cp -f .coverage .coverage.host; \
-	  COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc \
-	    $(COVERAGE) combine -q .coverage.host server/.coverage; \
-	else \
-	  echo "⚠️  Pas de server/.coverage → rapport host seul"; \
+	files=""; \
+	host_file="$$(find . -maxdepth 1 -type f -name '.coverage.host' -size +0c -printf ' %p' 2>/dev/null || true)"; \
+	files="$$files$$host_file"; \
+	api_worker_files="$$(find server -maxdepth 1 -type f -name '.coverage*' ! -name '.coveragerc' -size +0c -printf ' %p' 2>/dev/null || true)"; \
+	files="$$files$$api_worker_files"; \
+	if [ -z "$$files" ]; then \
+	  echo "❌ Aucun fichier coverage trouvé à combiner"; exit 1; \
 	fi; \
+	echo "⏳ Combine coverage: $$files"; \
 	COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc \
-	  $(COVERAGE) report -m --fail-under=70
+	  $(COVERAGE) combine -q $$files; \
+	COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc \
+	  $(COVERAGE) report -m --fail-under=$(FAIL_UNDER); \
+	COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc \
+	  $(COVERAGE) xml -o coverage.xml
 
+# Pipeline complet (local) : clean → up (API+worker) → migrate → tests host → stop → combine
+cov-all: cov-clean cov-api-up cov-migrate cov-host cov-api-down cov-combine
 
-# Pipeline complet
-cov-all: cov-clean cov-api-up cov-host cov-api-down cov-combine
+# Full verification
+verify:
+	BUILD=$(BUILD) THRESHOLD=$(THRESHOLD) bash scripts/verify_all.sh

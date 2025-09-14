@@ -1,90 +1,160 @@
+# Monitoring Server — Documentation complète
+
+> **Version téléchargeable** - Sauvegardez ce fichier sous `monitoring-server-docs.md`
+
 # Monitoring Server — Implémentation prête à l'emploi (v2)
 
-**Stack**: FastAPI, SQLAlchemy 2.x, Alembic, Celery + Redis, PostgreSQL, httpx
+**Stack :** FastAPI • SQLAlchemy 2.x • Alembic • Celery + Redis • PostgreSQL • httpx
 
-## Démarrage rapide
+⚠️ **Séparation des environnements**
+
+- **`.env.docker`** : lu par Docker/CI uniquement. Les services parlent à `db:5432` via le réseau interne Compose.
+- **`.env.integration.local`** : overrides côté hôte quand vous lancez `pytest` depuis l'hôte (les tests parlent à `localhost:5432`).
+- **`.env`** : réservé à un éventuel usage host-only (app sans Docker). À éviter pour l'intégration.
+
+---
+
+# Démarrage rapide
+
 ```bash
-# 1) Variables d'env locales
-cp .env.example .env
+# 1) Préparer les variables d'env pour Docker/CI
+cp .env.example .env.docker
 
-# 2) Lancer l’infra
+# 2) Lancer l'infra (API, worker, beat, Redis, Postgres)
 cd docker
 docker compose up --build -d
+# (compose lit ../.env.docker déclaré dans docker-compose.yml)
 
-# 3) Appliquer les migrations
+# 3) Migrations
+# L'entrypoint API applique déjà les migrations au démarrage.
+# Vous pouvez forcer manuellement si besoin :
 docker compose exec api alembic upgrade head
+
+# 4) Vérifier la santé
+curl -fsS http://localhost:8000/api/v1/health
 ```
 
-Par défaut l’API écoute sur http://localhost:8000
-Swagger UI : http://localhost:8000/docs — OpenAPI : /openapi.json
+- **API :** http://localhost:8000
+- **Swagger UI :** http://localhost:8000/docs
+- **OpenAPI :** http://localhost:8000/openapi.json
 
-## Quick Rebuild / Restart
+---
 
-### Modifs de code Python seulement → pas de rebuild, juste restart
+# Fichiers d'environnement — qui fait quoi (important)
 
+- **`.env.docker`** (source de vérité Docker/CI)
+Chargé par `docker/docker-compose.yml` via `env_file: ../.env.docker`.
+✨ Ne pas le charger côté hôte (sinon vous tenterez de joindre `db:5432` depuis l'hôte → échec DNS).
+
+- **`.env.integration.local`** (host overrides pour pytest)
+Utile quand vous lancez des tests depuis l'hôte. Exemple minimal :
+
+```bash
+# .env.integration.local
+DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/monitoring
+```
+
+Puis :
+
+```bash
+ENV_FILE=.env.integration.local pytest -m integration
+```
+
+Le conftest d'intégration détecte `ENV_FILE` très tôt pour éviter que l'app fige une mauvaise `DATABASE_URL` au moment de l'import.
+
+- **`.env`** (optionnel, host-only)
+À garder pour un usage local "non Docker". Évitez-le dans les workflows d'intégration pour ne pas polluer `DATABASE_URL`.
+
+**Astuce :** dans le code, `Settings()` (pydantic-settings) lit `ENV_FILE` si présent, sinon `.env` par défaut.
+Dans Docker, ne définissez pas `ENV_FILE` côté services pour éviter toute lecture d'un `.env` de l'hôte monté par erreur.
+
+---
+
+# Quick rebuild / restart
+
+Modifs Python uniquement → pas besoin de rebuild d'image :
+
+```bash
+# Redémarrages ciblés
 docker compose -f docker/docker-compose.yml restart api worker beat
 
-### Modifs de deps / pyproject.toml, Dockerfile, entrypoint, etc. → rebuild ciblé
+# via Makefile
+make restart
+```
 
+Modifs de deps / Dockerfile / entrypoint :
+
+```bash
+# Rebuild + up
 docker compose -f docker/docker-compose.yml build api worker beat
 docker compose -f docker/docker-compose.yml up -d api worker beat
 
-(forcé si besoin)
+# via Makefile
+make rebuild
 
+# Rebuild forcé (nocache)
 docker compose -f docker/docker-compose.yml build --no-cache api worker beat
 docker compose -f docker/docker-compose.yml up -d api worker beat
 
-### Smoke check
+# via Makefile
+make rebuild-nocache
+```
 
-make health
-
-
-## Jeu de données de dév (si besoin)
-
-Le dépôt contient une migration de seed (0002_seed_dev_data.py).
-Si vous avez besoin de (ré)injecter rapidement un client + clé API à la main :
+Smoke check rapide :
 
 ```bash
-# Dans le conteneur Postgres
-docker compose exec -e PGPASSWORD=postgres db psql -U postgres -d monitoring -c \
+make health
+# ou : curl -fsS http://localhost:8000/api/v1/health
+```
+
+---
+
+# Jeu de données de dev (seed rapide)
+
+Le dépôt inclut une migration de seed (`0002_seed_dev_data.py`).
+Injection minimale avec `psql` dans le conteneur `db` :
+
+```bash
+# Client
+docker compose exec -e PGPASSWORD=postgres db psql -U postgres -d monitoring -c
 "INSERT INTO clients (id, name) VALUES ('00000000-0000-0000-0000-000000000001','Dev') ON CONFLICT DO NOTHING;"
 
-docker compose exec -e PGPASSWORD=postgres db psql -U postgres -d monitoring -c \
-"INSERT INTO api_keys (id, client_id, key, name, is_active)
- VALUES ('00000000-0000-0000-0000-000000000002',
-         '00000000-0000-0000-0000-000000000001',
-         'dev-apikey-123','dev', true)
- ON CONFLICT DO NOTHING;"
+# Clé API
+docker compose exec -e PGPASSWORD=postgres db psql -U postgres -d monitoring -c
+"INSERT INTO api_keys (id, client_id, key, name, is_active) VALUES
+('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','dev-apikey-123','dev', true)
+ON CONFLICT DO NOTHING;"
 
-docker compose exec -e PGPASSWORD=postgres db psql -U postgres -d monitoring -c \
+# Settings client
+docker compose exec -e PGPASSWORD=postgres db psql -U postgres -d monitoring -c
 "INSERT INTO client_settings (id, client_id, notification_email, heartbeat_threshold_minutes,
-                              consecutive_failures_threshold, alert_grouping_enabled)
- VALUES ('00000000-0000-0000-0000-000000000003',
-         '00000000-0000-0000-0000-000000000001',
-         'alerts@example.com', 5, 2, true)
- ON CONFLICT (client_id) DO NOTHING;"
- ```
+consecutive_failures_threshold, alert_grouping_enabled) VALUES
+('00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000001',
+'alerts@example.com', 5, 2, true)
+ON CONFLICT (client_id) DO NOTHING;"
+```
 
-Clé API de dev utilisée dans les exemples : dev-apikey-123
+Clé API de dev utilisée dans les exemples : `dev-apikey-123`
 
-## Endpoints utiles
+---
 
-### Healthcheck
+# Endpoints utiles
+
+**Healthcheck**
 
 ```bash
 curl -s http://localhost:8000/api/v1/health
-# -> {"status":"ok"}
+# {"status":"ok"}
 ```
 
-### HTTP targets
-
-- Lister (GET /api/v1/http-targets)
+**HTTP targets – lister**
 
 ```bash
-curl -s -H "X-API-Key: dev-apikey-123" http://localhost:8000/api/v1/http-targets | jq .
+curl -s -H "X-API-Key: dev-apikey-123" \
+  http://localhost:8000/api/v1/http-targets | jq .
 ```
 
-- Créer (POST /api/v1/http-targets)
+**HTTP targets – créer**
 
 ```bash
 curl -s -H "Content-Type: application/json" -H "X-API-Key: dev-apikey-123" \
@@ -100,139 +170,161 @@ curl -s -H "Content-Type: application/json" -H "X-API-Key: dev-apikey-123" \
 # 201 -> {"id":"<uuid>"}
 ```
 
-- Conflit (idempotence) — 409
+**Conflit/idempotence** `409`
+Pour une URL déjà existante pour le même client, le serveur renvoie un `409` avec `detail.existing_id`.
 
-Si la même URL existe déjà *pour le même client*, le serveur renvoie :
+**Validation** `422`
+URL non-HTTP(S) → `422` avec message explicite (schéma attendu, validation Pydantic).
 
-```json
-{
-  "detail": {
-    "message": "An HTTP target with this URL already exists for this client.",
-    "existing_id": "<uuid de la cible déjà existante>"
-  }
-}
-```
+---
 
-- Validation (422)
+# Tâches périodiques (Celery)
 
-URL non-HTTP(S) :
+- **Évaluation :** 60s
+- **Heartbeat :** 120s
+- **HTTP monitoring :** 300s
 
-```bash
-curl -s -H "Content-Type: application/json" -H "X-API-Key: dev-apikey-123" \
-  -X POST http://localhost:8000/api/v1/http-targets -d '{
-    "name":"Bad URL","url":"ftp://example.com"
-  }'
-# -> 422 avec un détail "URL scheme should be 'http' or 'https'"
-```
-
-### Tâches périodiques (Celery)
-- Évaluation: toutes les 60s
-- Heartbeat: toutes les 120s
-- HTTP monitoring: toutes les 300s
-Vous pouvez déclencher manuellement une vérification HTTP d’une cible :
+Déclencher manuellement une vérification HTTP d'une cible :
 
 ```bash
-# Remplacez <ID> par l'id de la cible
+# Remplacez <ID> par l'UUID de la cible
 docker compose exec -T worker \
   celery -A app.workers.celery_app.celery call tasks.http_one --queue http \
   --args '["<ID>"]'
 ```
 
-### “Smoke tests” HTTP targets
+---
 
-Un script shell est fourni pour valider rapidement la route /http-targets :
+# "Smoke tests" HTTP targets
+
+Un script est fourni :
 
 ```bash
 chmod +x scripts/smoke_http_targets.sh
 API=http://localhost:8000 KEY=dev-apikey-123 ./scripts/smoke_http_targets.sh
 ```
 
-Ce script vérifie notamment :
-- Deux POST concurrents → un 201 et un 409 (avec existing_id)
-- Idempotence d’un POST répété → 409
-- Validation d’URL → 422
+Il valide notamment :
 
-### Tests d’intégration depuis l’hôte
-Les tests d’intégration HTTP (via requests) ciblent l’API qui tourne dans Docker.
+- Deux POST concurrents → un `201` et un `409` (avec `existing_id`)
+- Idempotence d'un POST répété → `409`
+- Validation d'URL → `422`
 
+🛈 À lancer après que l'API réponde sur `/api/v1/health`. En CI, il est optionnel (non exécuté par défaut).
+
+---
+
+# Tests — nouvelle organisation
+
+- **Unit** (sans Docker)
 ```bash
-# 1) Créez un venv local et installez les dépendances de test minimales
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -U pip pytest requests
-
-# 2) Exécutez les tests en pointant vers l’API dockerisée
-API=http://localhost:8000 KEY=dev-apikey-123 \
-pytest -q server/tests/test_http_targets_integration.py
+pytest -m unit -q --maxfail=1
 ```
 
-Astuce : pour lancer aussi le test de santé :
-API=http://localhost:8000 pytest -q server/tests/test_health.py server/tests/test_http_targets_integration.py
+- **Integration** (host → API dockerisée)
+```bash
+# 1) s'assurer que la stack tourne (voir "Démarrage rapide")
+# 2) forcer la DATABASE_URL "host"
+echo 'DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/monitoring' > .env.integration.local
 
-### Développement & redémarrages
+# 3) lancer les tests d'intégration
+ENV_FILE=.env.integration.local \
+API=http://localhost:8000 \
+KEY=dev-apikey-123 \
+pytest -m integration -q --maxfail=1
+```
 
-- Changements côté API (FastAPI) : reconstruire/redémarrer api si l’image ne fait pas de reload automatique.
+- **E2E** (stack démarrée par le script)
+```bash
+chmod +x scripts/test_e2e.sh
+./scripts/test_e2e.sh
+```
+
+- **Vérification globale locale** (tout-en-un)
+```bash
+chmod +x scripts/verify_all.sh
+./scripts/verify_all.sh
+# => enchaîne unit → integration (cov-all) → e2e
+```
+
+- **Couverture agrégée** (integration)
+```bash
+# Combine host + API + worker et génère coverage.xml
+WITH_WORKER=1 make cov-all
+```
+
+---
+
+# Développement & redémarrages
+
+**API (FastAPI) :** rebuild/redémarrage si pas de reload auto.
 
 ```bash
 docker compose up -d --build api
 ```
 
-- Changements côté workers (Celery) : redémarrer worker si vous modifiez du code de tâches.
+**Workers (Celery) :** redémarrer worker si vous modifiez des tâches.
 
 ```bash
 docker compose restart worker
 ```
 
-- Migrations : après modification du schéma, exécuter alembic upgrade head.
+**Migrations :** après changement de schéma.
 
-### Dépannage rapide
-- 401 Unauthorized : X-API-Key manquant ou invalide.
-- 404 : vérifiez la route (/api/v1/http-targets, avec tiret).
-- 422 : erreur de validation Pydantic (ex.: schéma d’URL).
-- 500 pendant POST /http-targets :
-  - Assurez-vous que les migrations sont exécutées (alembic upgrade head).
-  - Inspectez docker compose logs api pour voir la stacktrace.
-  - Si vous venez de modifier le code, (re)build l’image api pour embarquer la version avec gestion du 409 (dupliqués sur (client_id, url)).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Monitoring Server — Implémentation prête à l'emploi (v2)
-
-**Stack**: FastAPI, SQLAlchemy 2.x, Alembic, Celery+Redis, PostgreSQL, httpx.
-
-## Démarrage rapide
 ```bash
-cp .env.example .env
-cd docker
-docker compose up --build -d
 docker compose exec api alembic upgrade head
 ```
 
-### Seed rapide (psql dans le conteneur db)
+---
+
+# Dépannage rapide
+
+`psycopg OperationalError: Errno -2 Name or service not known`
+→ Vous utilisez `@db:5432` depuis l'hôte : `db` n'existe que dans le réseau Docker.
+✅ Pour les tests hôte, utilisez `@localhost:5432` via `.env.integration.local` et `ENV_FILE=.env.integration.local`.
+
+Vérifs utiles :
+
 ```bash
-docker compose exec -e PGPASSWORD=postgres db psql -U postgres -d monitoring -c "INSERT INTO clients (id, name) VALUES ('00000000-0000-0000-0000-000000000001','Acme');"
-docker compose exec -e PGPASSWORD=postgres db psql -U postgres -d monitoring -c "INSERT INTO api_keys (id, client_id, key, name, is_active) VALUES ('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','dev-key-123','dev', true);"
-docker compose exec -e PGPASSWORD=postgres db psql -U postgres -d monitoring -c "INSERT INTO client_settings (id, client_id, notification_email, heartbeat_threshold_minutes, consecutive_failures_threshold, alert_grouping_enabled) VALUES ('00000000-0000-0000-0000-000000000003','00000000-0000-0000-0000-000000000001','alerts@example.com',5,2,true) ON CONFLICT (client_id) DO NOTHING;"
+# Port Postgres exposé
+nc -zv localhost 5432
+
+# API health
+curl -fsS http://localhost:8000/api/v1/health
 ```
 
-### Test d'ingestion
+- `401 Unauthorized` : header `X-API-Key` manquant/incorrect (utiliser `dev-apikey-123` si seedé).
+- `404` : vérifier la route (`/api/v1/http-targets` avec tiret).
+- `422` : données invalides (Pydantic) → lire le détail JSON.
+- Slack non configuré : en dev vous pouvez activer `STUB_SLACK=1` ou pointer vers `http://httpbin:80/status/204`.
+- Compose ne démarre pas : vérifier `.env.docker` à la racine (copie depuis `.env.example`).
+
+---
+
+# Notes CI (résumé)
+
+La CI :
+
+- prépare `.env.docker`
+- démarre la stack via `docker compose --env-file ../.env.docker up -d --build`
+- attend la DB, applique les migrations Alembic dans le conteneur `api`
+- exécute : unit (host-only) → integration (cov-all) → e2e
+- envoie la couverture vers Codecov (3 rapports séparés)
+
+🛈 Le script `scripts/smoke_http_targets.sh` est optionnel et non exécuté par défaut en CI (peut être ajouté après les E2E si besoin).
+
+---
+
+# Annexes — Exemples rapides
+
+**Ingestion de métriques** (exemple)
+
 ```bash
-curl -X POST http://localhost:8000/api/v1/ingest/metrics       -H 'X-API-Key: dev-key-123'       -H 'X-Ingest-Id: 11111111-1111-1111-1111-111111111111'       -H 'Content-Type: application/json'       -d '{
+curl -X POST http://localhost:8000/api/v1/ingest/metrics \
+  -H 'X-API-Key: dev-apikey-123' \
+  -H 'X-Ingest-Id: 11111111-1111-1111-1111-111111111111' \
+  -H 'Content-Type: application/json' \
+  -d '{
     "machine": {"hostname":"web-01", "os":"linux"},
     "metrics": [
       {"name":"cpu_load","type":"numeric","value":0.42,"unit":"ratio"},
@@ -243,7 +335,9 @@ curl -X POST http://localhost:8000/api/v1/ingest/metrics       -H 'X-API-Key: de
   }'
 ```
 
-## Services périodiques
-- Évaluation: 60s
-- Heartbeat: 120s
-- HTTP monitoring: 300s
+**Périodicités par défaut**
+- **Évaluation :** 60s
+- **Heartbeat :** 120s
+- **HTTP monitoring :** 300s
+
+Bon run ! 🎯

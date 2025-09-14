@@ -3,12 +3,15 @@ from __future__ import annotations
 ~~~~~~~~~~~~~~~~~~~~~~~~
 Paramètres (pydantic-settings).
 """
+
+import os
 from typing import Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgresql+psycopg2://postgres:postgres@db:5432/monitoring"
+    DATABASE_URL: str = "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+    DB_CONNECT_TIMEOUT: int = Field(5, env="DB_CONNECT_TIMEOUT")
     REDIS_URL: str = "redis://redis:6379/0"
     JWT_SECRET: str = "change-me"
     NO_DATA_MINUTES: int = 5
@@ -21,7 +24,6 @@ class Settings(BaseSettings):
     STUB_SLACK: bool = False
     
     model_config = SettingsConfigDict(
-        env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
     )

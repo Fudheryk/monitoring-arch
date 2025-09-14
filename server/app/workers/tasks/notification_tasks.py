@@ -205,7 +205,7 @@ def notify(self, payload: Dict[str, Any]) -> bool:
             incident_id=validated.incident_id,
             alert_id=validated.alert_id,
         )
-        logger.error("Slack webhook not configured. Set SLACK_WEBHOOK in .env")
+        logger.error("Slack webhook not configured. Set SLACK_WEBHOOK in the environment.")
         return False
 
     # 3) Journaliser l'intention (pending)

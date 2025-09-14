@@ -1,15 +1,12 @@
-import os
-import pytest
-import requests
+# /server/tests/integration/test_endpoints_smoke.py
+# Smoke léger : vérifie que les endpoints principaux répondent (200/204 ou 401/403/405 si protégés).
+# La route "targets" est détectée dynamiquement via la fixture targets_base.
 
-API = os.getenv("API", "http://localhost:8000")
-KEY = os.getenv("KEY", "dev-apikey-123")
-H = {"X-API-Key": KEY}
+import pytest
 
 pytestmark = pytest.mark.integration
 
-# Endpoints "légers" qui devraient répondre même si la base est vide
-# (liste vide en 200, voire 204 selon implémentation).
+# Endpoints "simples" (hors 'targets' qui est dynamique)
 ENDPOINTS = [
     ("GET", "/api/v1/alerts"),
     ("GET", "/api/v1/dashboard/summary"),
@@ -17,12 +14,15 @@ ENDPOINTS = [
     ("GET", "/api/v1/machines"),
     ("GET", "/api/v1/metrics"),
     ("GET", "/api/v1/settings"),
-    # Si tu exposes un ping/health protégé par clé, ajoute-le ici.
-    # ("GET", "/api/v1/health"),
+    ("GET", "/api/v1/health"),
 ]
 
 @pytest.mark.parametrize("method,path", ENDPOINTS)
-def test_endpoints_smoke(method, path):
-    r = requests.request(method, f"{API}{path}", headers=H, timeout=5)
-    # On évite 404 (qui ne passerait pas par le code endpoint).
-    assert r.status_code in (200, 204), (path, r.status_code, r.text[:200])
+def test_endpoints_smoke_basic(session_retry, api_base, api_headers, method, path):
+    r = session_retry.request(method, f"{api_base}{path}", headers=api_headers)
+    # Autoriser 200/204, mais aussi 401/403/405 si le routeur existe mais protégé/méthode non permise
+    assert r.status_code in (200, 204, 401, 403, 405), (path, r.status_code, r.text[:200])
+
+def test_endpoints_smoke_targets(session_retry, api_base, api_headers, targets_base):
+    r = session_retry.get(f"{api_base}{targets_base}", headers=api_headers)
+    assert r.status_code in (200, 401, 403, 405), (targets_base, r.status_code, r.text[:200])

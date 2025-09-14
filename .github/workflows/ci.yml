@@ -1,3 +1,11 @@
+# .github/workflows/ci.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# CI en 3 jobs : unit → integration (Docker) → e2e (Docker)
+# - On prépare et on utilise **.env.docker** partout dans la CI.
+# - L’intégration utilise le Makefile (cov-all) pour capturer la couverture
+#   côté hôte + API + worker, puis combine et produit coverage.xml.
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: CI
 
 on:
@@ -9,10 +17,15 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+jobs:
+  # ============================================================
+  # 1) UNIT — tests rapides sans Docker
+  # ============================================================
+  unit:
+    runs-on: ubuntu-latest
     env:
       STUB_SLACK: "1"
       ALERT_REMINDER_MINUTES: "1"
@@ -20,58 +33,113 @@ jobs:
       API: http://localhost:8000
 
     steps:
-      # ---------- CHECKOUT ----------
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---------- DOCKER INFO ----------
-      - name: Show Docker versions
-        run: |
-          docker --version
-          docker compose version || true
-
-      # ---------- UTILS ----------
       - name: Ensure curl + jq are present
         run: |
           sudo apt-get update -y
           sudo apt-get install -y curl jq
 
-      # ---------- PYTHON SETUP ----------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # ---------- INSTALL DEPENDENCIES (DEV) ----------
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
       - name: Install project deps (unit tests)
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-      - name: Show pytest version
-        run: pytest --version
 
-      # ---------- UNIT TESTS ----------
-      - name: Run unit tests (no Docker)
+      - name: Run unit tests (xdist)
         env:
           CELERY_TASK_ALWAYS_EAGER: "1"
           STUB_SLACK: "1"
           ALERT_REMINDER_MINUTES: "1"
           SLACK_WEBHOOK: "http://httpbin:80/status/204"
         run: |
-          pytest -q -m "unit" --cov=server/app --cov-config=.coveragerc --cov-report=term-missing --maxfail=1
+          pytest -m "unit" -n auto \
+            --cov=server/app --cov-config=.coveragerc \
+            --cov-report=term-missing --cov-report=xml \
+            --cov-fail-under=60 \
+            --maxfail=1
 
-      # ---------- PREPARE .ENV ----------
-      - name: Prepare root .env from example
+      - name: Upload coverage xml (unit)
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit.xml
+          path: coverage.xml
+
+      - name: Upload to Codecov (unit)
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: unit
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  # ============================================================
+  # 2) INTEGRATION — démarre la stack Docker, exécute les tests,
+  #    capture la couverture API + worker, et la combine avec host
+  # ============================================================
+  integration:
+    runs-on: ubuntu-latest
+    needs: unit
+    env:
+      STUB_SLACK: "1"
+      ALERT_REMINDER_MINUTES: "1"
+      KEY: dev-apikey-123
+      API: http://localhost:8000
+      PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Docker versions
+        run: |
+          docker --version
+          docker compose version || true
+
+      - name: Ensure curl + jq are present
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y curl jq
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install project deps (integration tests)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Prépare .env.docker (CI) → utilisé par docker compose
+      - name: Prepare root .env.docker from example
         run: |
           if [ -f .env.example ]; then
-            cp .env.example .env
+            cp .env.example .env.docker
           else
             echo "ERROR: .env.example is missing at repo root" >&2
             exit 1
           fi
-
-          # Forcer certaines variables pour tests CI
-          awk 'BEGIN{printed_slack=0; printed_reminder=0} 
+          awk 'BEGIN{printed_slack=0; printed_reminder=0}
               /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; printed_slack=1; next}
               /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; printed_reminder=1; next}
               {print}
@@ -79,77 +147,33 @@ jobs:
                 if(!printed_slack)    print "SLACK_WEBHOOK=http://httpbin:80/status/204";
                 if(!printed_reminder) print "ALERT_REMINDER_MINUTES=1";
                 print "STUB_SLACK=1";
-              }' .env > .env.ci
-          mv .env.ci .env
+              }' .env.docker > .env.ci
+          mv .env.ci .env.docker
+          cp .env.docker docker/.env.docker
+          sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env.docker
 
-          # Copier .env dans docker/ pour que docker compose le voie
-          cp .env docker/.env
-
-          echo "---- .env used in CI ----"
-          sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env
-
-      # ---------- START DOCKER STACK ----------
-      - name: Start stack (docker compose)
-        working-directory: docker
-        run: docker compose --env-file ../.env up -d --build
-
-      - name: Wait for DB
-        working-directory: docker
-        run: |
-          for i in {1..30}; do
-            docker compose --env-file ../.env exec -T db pg_isready -U postgres && break
-            sleep 2
-          done
-
-      - name: Run Alembic migrations
-        working-directory: docker
-        run: docker compose run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
-
-      - name: Wait for API to be healthy
-        run: |
-          for i in {1..60}; do
-            curl -fsS http://localhost:8000/api/v1/health && exit 0
-            sleep 2
-          done
-          echo "API not healthy" >&2
-          exit 1
-
-      # ---------- SMOKE TESTS ----------
-      - name: Smoke HTTP targets
+      # 🔥 Pipeline coverage via Makefile : up (API+worker) → migrate → tests host → stop → combine
+      - name: Run integration coverage pipeline (cov-all)
         env:
-          API: http://localhost:8000
-          KEY: dev-apikey-123
+          API: ${{ env.API }}
+          KEY: ${{ env.KEY }}
         run: |
-          chmod +x scripts/smoke_http_targets.sh
-          ./scripts/smoke_http_targets.sh
+          WITH_WORKER=1 make cov-all
 
-      # ---------- DEBUG CELERY ----------
-      - name: Show queues / tasks
-        working-directory: docker
-        run: |
-          docker compose exec -T worker celery -A app.workers.celery_app inspect active_queues || true
-          docker compose exec -T worker celery -A app.workers.celery_app inspect registered || true
+      - name: Upload coverage xml (integration)
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration.xml
+          path: coverage.xml
 
-      # ---------- INTEGRATION / E2E TESTS ----------
-      - name: Run integration tests
-        env:
-          API: http://localhost:8000
-          KEY: dev-apikey-123
-          STUB_SLACK: "1"
-          ALERT_REMINDER_MINUTES: "1"
-        run: |
-          pytest -q -m "integration" --cov=server/app --cov-config=.coveragerc --cov-report=term-missing --maxfail=1
+      - name: Upload to Codecov (integration)
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: integration
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
 
-      - name: Run E2E tests
-        env:
-          API: http://localhost:8000
-          KEY: dev-apikey-123
-          STUB_SLACK: "1"
-          ALERT_REMINDER_MINUTES: "1"
-        run: |
-          pytest -q -m "e2e" --cov=server/app --cov-config=.coveragerc --cov-report=term-missing --maxfail=1
-
-      # ---------- LOGS & TEARDOWN ----------
       - name: Dump docker logs on failure
         if: failure()
         working-directory: docker
@@ -162,7 +186,140 @@ jobs:
       - name: Stop stack
         if: always()
         working-directory: docker
-        run: docker compose --env-file ../.env down -v
+        run: docker compose --env-file ../.env.docker down -v
 
+  # ============================================================
+  # 3) E2E — redémarre la stack et lance seulement les tests e2e
+  #     (pas de combine ici, on laisse Codecov agréger)
+  # ============================================================
+  e2e:
+    runs-on: ubuntu-latest
+    needs: integration
+    env:
+      STUB_SLACK: "1"
+      ALERT_REMINDER_MINUTES: "1"
+      KEY: dev-apikey-123
+      API: http://localhost:8000
+      PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Show Docker versions
+        run: |
+          docker --version
+          docker compose version || true
+
+      - name: Ensure curl + jq are present
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y curl jq
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install project deps (e2e tests)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Prepare root .env.docker from example
+        run: |
+          if [ -f .env.example ]; then
+            cp .env.example .env.docker
+          else
+            echo "ERROR: .env.example is missing at repo root" >&2
+            exit 1
+          fi
+          awk 'BEGIN{printed_slack=0; printed_reminder=0}
+              /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; printed_slack=1; next}
+              /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; printed_reminder=1; next}
+              {print}
+              END{
+                if(!printed_slack)    print "SLACK_WEBHOOK=http://httpbin:80/status/204";
+                if(!printed_reminder) print "ALERT_REMINDER_MINUTES=1";
+                print "STUB_SLACK=1";
+              }' .env.docker > .env.ci
+          mv .env.ci .env.docker
+          cp .env.docker docker/.env.docker
+          sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env.docker
+
+      - name: Start stack (docker compose - services minimaux)
+        working-directory: docker
+        run: docker compose --env-file ../.env.docker up -d --build db redis api
+
+      - name: Wait for DB
+        working-directory: docker
+        run: |
+          for i in {1..30}; do
+            docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres && break
+            sleep 2
+          done
+
+      - name: Run Alembic migrations
+        working-directory: docker
+        run: docker compose run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
+
+      - name: Wait for API to be healthy
+        run: |
+          for i in {1..60}; do
+            curl -fsS -m 2 -H "X-API-Key: $KEY" "$API/api/v1/health" && exit 0
+            sleep 2
+          done
+          exit 1
+      
+      - name: HTTP targets smoke
+        env:
+          API: ${{ env.API }}
+          KEY: ${{ env.KEY }}
+        run: bash scripts/smoke_http_targets.sh
+
+      - name: Run E2E tests
+        env:
+          API: ${{ env.API }}
+          KEY: ${{ env.KEY }}
+          STUB_SLACK: "1"
+          ALERT_REMINDER_MINUTES: "1"
+        run: |
+          pytest -m "e2e" \
+            --cov=server/app --cov-config=.coveragerc \
+            --cov-report=term-missing --cov-report=xml \
+            --maxfail=1
+
+      - name: Upload coverage xml (e2e)
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-e2e.xml
+          path: coverage.xml
+
+      - name: Upload to Codecov (e2e)
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: e2e
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Dump docker logs on failure
+        if: failure()
+        working-directory: docker
+        run: |
+          docker compose ps || true
+          docker compose logs api | tail -n 400 || true
+          docker compose logs worker | tail -n 400 || true
+          docker compose logs db | tail -n 200 || true
+
+      - name: Stop stack
+        if: always()
+        working-directory: docker
+        run: docker compose --env-file ../.env.docker down -v

@@ -74,6 +74,13 @@ def test_e2e_alert_flow_with_monkeypatch(monkeypatch):
     - appel direct du service check_http_targets() (travaille sur la même DB)
     - vérif via /api/v1/incidents que l'incident a été ouvert
     """
+
+    # Forcer les tests host à parler au Postgres exposé par Docker (localhost:5432)
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5",
+    )
+
     # 1) route des targets
     base = _targets_base()  # ex: /api/v1/http-targets
 
@@ -81,7 +88,7 @@ def test_e2e_alert_flow_with_monkeypatch(monkeypatch):
     name = f"e2e-fail-{uuid.uuid4()}"
     payload = {
         "name": name,
-        "url": "https://example.com/health",
+        "url": "https://example.com/health?rnd={uuid.uuid4()}",
         "method": "GET",
         "expected_status_code": 200,
         "timeout_seconds": 5,
@@ -89,8 +96,14 @@ def test_e2e_alert_flow_with_monkeypatch(monkeypatch):
         "is_active": True,
     }
     r = requests.post(f"{API}{base}", json=payload, headers=H, timeout=5)
-    assert r.status_code in (200, 201), f"POST {base} → {r.status_code}, body={r.text}"
-    tid = r.json()["id"]
+    if r.status_code in (200, 201):
+        tid = r.json()["id"]
+    elif r.status_code == 409:
+        # La cible existe déjà : on réutilise son id
+        tid = (r.json().get("detail") or {}).get("existing_id")
+        assert tid, f"409 sans existing_id dans la réponse: {r.text}"
+    else:
+        raise AssertionError(f"POST {base} → {r.status_code}, body={r.text}")
 
     # 3) monkeypatch du HTTP interne + de la notification Celery
     #    (afin d'éviter toute dépendance réseau et forcer un DOWN)
