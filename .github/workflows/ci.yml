@@ -95,51 +95,74 @@ jobs:
         run: |
           # Chaque shard écrit un fragment de couverture distinct
           export COVERAGE_FILE=".coverage.unit.${{ matrix.shard }}"
+          echo "=== Coverage config debug ==="
+          echo "COVERAGE_FILE=$COVERAGE_FILE"
+          echo "Working directory: $(pwd)"
+          
           # Sharding: 4 groupes, ce runner exécute le groupe n
           # xdist: parallélisme intra-runner (CPU cores)
           pytest -m "unit" --splits 4 --group ${{ matrix.shard }} -n auto \
             --cov=server/app --cov-config=.coveragerc \
             --cov-report=term-missing \
             --cov-fail-under=0 --maxfail=1
+          
+          echo "=== Post-test coverage debug ==="
+          echo "Exit code: $?"
+          echo "Current directory files:"
+          ls -la || true
+          echo "Coverage files:"
+          ls -la .coverage* || echo "No .coverage* files found"
 
       - name: Normalize coverage filename (shard)
         run: |
           set -euxo pipefail
           TGT=".coverage.unit.${{ matrix.shard }}"
+          echo "=== Coverage normalization debug ==="
           echo "Looking for coverage file for shard ${{ matrix.shard }}"
+          echo "Target filename: $TGT"
           echo "Current directory contents:"
           ls -la || true
           echo "Looking for any .coverage* files:"
           ls -la .coverage* || echo "No .coverage* files found"
           
           if [[ -f "$TGT" ]]; then
-            echo "Found $TGT"
+            echo "✓ Found expected file: $TGT"
             ls -la "$TGT"
           elif [[ -f ".coverage" ]]; then
+            echo "→ Moving .coverage to $TGT"
             mv .coverage "$TGT"
-            echo "Moved .coverage -> $TGT"
             ls -la "$TGT"
           else
-            echo "WARNING: no coverage data file produced for this shard"
-            echo "This could indicate:"
-            echo "1. No tests were run (empty shard)"
-            echo "2. pytest/coverage failed"
-            echo "3. Tests ran but no code was covered"
+            echo "⚠️ WARNING: No coverage data file found for shard ${{ matrix.shard }}"
+            echo "Possible causes:"
+            echo "  1. No tests were assigned to this shard (empty shard)"
+            echo "  2. pytest failed to run"
+            echo "  3. Coverage collection failed"
+            
+            # Vérifier si pytest a vraiment tourné
+            if [[ $? -ne 0 ]]; then
+              echo "❌ pytest command failed"
+              exit 1
+            fi
+            
             # Créer un fichier vide pour éviter les erreurs d'upload
-            : > "$TGT"
-            echo "Created empty placeholder: $TGT"
+            echo "Creating empty placeholder: $TGT"
+            echo "# Empty coverage file - no tests in this shard" > "$TGT"
           fi
           
-          echo "Final coverage files:"
-          ls -la .coverage* || true
+          echo "=== Final state ==="
+          echo "Coverage files after normalization:"
+          ls -la .coverage* || echo "Still no coverage files!"
 
-      # CORRECTION: Chaque shard upload son propre artifact avec un nom unique
+      # Upload avec un nom unique par shard ET include du numéro de shard dans le path
       - name: Upload raw coverage (shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: unit-coverage-${{ matrix.shard }}
+          name: coverage-shard-${{ matrix.shard }}
           path: .coverage.unit.${{ matrix.shard }}
+          retention-days: 1
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
   # 1.bis) AGGREGATE — combine la couverture des 4 shards unit en un report
@@ -158,54 +181,67 @@ jobs:
       - name: Install coverage tool
         run: pip install coverage
 
-      # CORRECTION: Télécharger chaque shard individuellement
-      - name: Download shard coverage 1
-        uses: actions/download-artifact@v4
-        with:
-          name: unit-coverage-1
-          path: coverage-files
+      - name: Create coverage directory
+        run: mkdir -p coverage-files
 
-      - name: Download shard coverage 2
+      # SOLUTION : télécharger avec pattern et merge automatique
+      - name: Download all coverage artifacts
         uses: actions/download-artifact@v4
         with:
-          name: unit-coverage-2
-          path: coverage-files
-
-      - name: Download shard coverage 3
-        uses: actions/download-artifact@v4
-        with:
-          name: unit-coverage-3
-          path: coverage-files
-
-      - name: Download shard coverage 4
-        uses: actions/download-artifact@v4
-        with:
-          name: unit-coverage-4
-          path: coverage-files
+          pattern: coverage-shard-*
+          path: coverage-files/
+          merge-multiple: true
 
       - name: Debug downloaded files
         run: |
-          echo "Downloaded files:"
+          echo "=== Downloaded artifacts debug ==="
+          echo "Coverage files directory structure:"
           find coverage-files -type f -ls || true
-          echo "Coverage files specifically:"
+          echo ""
+          echo "Specifically looking for .coverage* files:"
           find coverage-files -name ".coverage*" -ls || true
+          echo ""
+          echo "File sizes:"
+          find coverage-files -name ".coverage*" -exec ls -lh {} \; || true
 
-      - name: Combine + report (unit)
+      - name: Validate and combine coverage
         run: |
           set -euo pipefail
           
-          # Récupère tous les fichiers .coverage* non vides
+          echo "=== Coverage combination process ==="
+          
+          # Trouve tous les fichiers .coverage* non vides
           mapfile -t files < <(find coverage-files -type f -name '.coverage*' -size +0c)
+          
+          echo "Found ${#files[@]} non-empty coverage files"
+          
           if [[ ${#files[@]} -eq 0 ]]; then
-            echo "ERROR: No non-empty unit coverage files downloaded. Check shard jobs."
+            echo "❌ ERROR: No non-empty unit coverage files found!"
+            echo "This indicates that either:"
+            echo "  1. All shards were empty (no tests ran)"
+            echo "  2. Coverage collection failed in all shards"
+            echo "  3. Artifact download failed"
             exit 1
           fi
           
-          echo "Combining coverage files: ${files[*]}"
+          # Affiche les détails des fichiers trouvés
+          for file in "${files[@]}"; do
+            echo "  → $(basename "$file"): $(wc -l < "$file" 2>/dev/null || echo "0") lines"
+          done
+          
+          echo ""
+          echo "Combining coverage files..."
           coverage combine "${files[@]}"
-          coverage report -m
+          
+          echo "Generating reports..."
+          coverage report -m --skip-covered
           coverage xml -o coverage-unit.xml
           coverage html -d htmlcov-unit
+          
+          echo ""
+          echo "✓ Coverage combination completed successfully"
+          echo "Coverage XML size: $(ls -lh coverage-unit.xml)"
+          echo "HTML report files: $(find htmlcov-unit -name "*.html" | wc -l) files"
 
       - name: Upload combined coverage XML
         uses: actions/upload-artifact@v4
@@ -217,7 +253,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: htmlcov-unit
-          path: htmlcov-unit
+          path: htmlcov-unit/
 
   # ---------------------------------------------------------------------------
   # 2) INTEGRATION — stack Docker + migrations + tests host (séquentiel)
@@ -290,28 +326,51 @@ jobs:
       - name: Wait for DB
         working-directory: docker
         run: |
+          echo "=== Waiting for database ==="
           for i in {1..60}; do
-            docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres && break
+            echo "Attempt $i/60..."
+            if docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres; then
+              echo "✓ Database is ready"
+              break
+            fi
+            if [[ $i -eq 60 ]]; then
+              echo "❌ Database failed to start"
+              docker compose logs db
+              exit 1
+            fi
             sleep 2
           done
 
       - name: Run Alembic migrations
         working-directory: docker
-        run: docker compose --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
+        run: |
+          echo "=== Running database migrations ==="
+          docker compose --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
 
       - name: Wait for API
         run: |
+          echo "=== Waiting for API health check ==="
           for i in {1..60}; do
-            curl -fsS -m 2 -H "X-API-Key: $KEY" "$API/api/v1/health" && exit 0
+            echo "Attempt $i/60: checking $API/api/v1/health"
+            if curl -fsS -m 2 -H "X-API-Key: $KEY" "$API/api/v1/health"; then
+              echo "✓ API is healthy"
+              exit 0
+            fi
+            if [[ $i -eq 60 ]]; then
+              echo "❌ API health check failed"
+              echo "=== API logs ==="
+              docker compose -f docker/docker-compose.yml logs api | tail -50
+              exit 1
+            fi
             sleep 2
           done
-          exit 1
 
       - name: Sanity env for DB (integration)
         env:
           PYTHONPATH: server
           DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
         run: |
+          echo "=== Integration DB sanity check ==="
           echo "DATABASE_URL=$DATABASE_URL"
           python - <<'PY'
           import os
@@ -327,15 +386,23 @@ jobs:
           KEY: ${{ env.KEY }}
           DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
         run: |
-          pytest -m "integration" --no-cov --maxfail=1
+          echo "=== Running integration tests ==="
+          pytest -m "integration" --no-cov --maxfail=1 -v
 
       - name: Dump docker logs on failure
         if: failure()
         working-directory: docker
         run: |
+          echo "=== Container status ==="
           docker compose ps || true
+          echo ""
+          echo "=== API logs (last 400 lines) ==="
           docker compose logs api | tail -n 400 || true
+          echo ""
+          echo "=== Worker logs (last 400 lines) ==="
           docker compose logs worker | tail -n 400 || true
+          echo ""
+          echo "=== DB logs (last 200 lines) ==="
           docker compose logs db | tail -n 200 || true
 
       - name: Stop stack
@@ -414,28 +481,51 @@ jobs:
       - name: Wait for DB
         working-directory: docker
         run: |
+          echo "=== Waiting for database ==="
           for i in {1..60}; do
-            docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres && break
+            echo "Attempt $i/60..."
+            if docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres; then
+              echo "✓ Database is ready"
+              break
+            fi
+            if [[ $i -eq 60 ]]; then
+              echo "❌ Database failed to start"
+              docker compose logs db
+              exit 1
+            fi
             sleep 2
           done
 
       - name: Run Alembic migrations
         working-directory: docker
-        run: docker compose --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
+        run: |
+          echo "=== Running database migrations ==="
+          docker compose --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
 
       - name: Wait for API to be healthy
         run: |
+          echo "=== Waiting for API health check ==="
           for i in {1..60}; do
-            curl -fsS -m 2 -H "X-API-Key: $KEY" "$API/api/v1/health" && exit 0
+            echo "Attempt $i/60: checking $API/api/v1/health"
+            if curl -fsS -m 2 -H "X-API-Key: $KEY" "$API/api/v1/health"; then
+              echo "✓ API is healthy"
+              exit 0
+            fi
+            if [[ $i -eq 60 ]]; then
+              echo "❌ API health check failed"
+              echo "=== API logs ==="
+              docker compose -f docker/docker-compose.yml logs api | tail -50
+              exit 1
+            fi
             sleep 2
           done
-          exit 1
 
       - name: Sanity env for DB (e2e)
         env:
           PYTHONPATH: server
           DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
         run: |
+          echo "=== E2E DB sanity check ==="
           echo "DATABASE_URL=$DATABASE_URL"
           python - <<'PY'
           import os
@@ -448,7 +538,9 @@ jobs:
         env:
           API: ${{ env.API }}
           KEY: ${{ env.KEY }}
-        run: bash scripts/smoke_http_targets.sh
+        run: |
+          echo "=== Running HTTP targets smoke test ==="
+          bash scripts/smoke_http_targets.sh
 
       - name: Run E2E tests
         env:
@@ -459,15 +551,21 @@ jobs:
           ALERT_REMINDER_MINUTES: "1"
           DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
         run: |
+          echo "=== Running E2E tests ==="
           # E2E : pas de parallélisme xdist (fragile sur stack partagée)
-          pytest -m "e2e" --no-cov --maxfail=1
+          pytest -m "e2e" --no-cov --maxfail=1 -v
 
       - name: Dump docker logs on failure
         if: failure()
         working-directory: docker
         run: |
+          echo "=== Container status ==="
           docker compose ps || true
+          echo ""
+          echo "=== API logs (last 400 lines) ==="
           docker compose logs api | tail -n 400 || true
+          echo ""
+          echo "=== DB logs (last 200 lines) ==="
           docker compose logs db | tail -n 200 || true
 
       - name: Stop stack
