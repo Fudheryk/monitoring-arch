@@ -6,6 +6,7 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+**/*.egg-info/
 
 # Tests / coverage artefacts
 .pytest_cache/

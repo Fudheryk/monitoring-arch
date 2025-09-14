@@ -5,4 +5,5 @@ uvicorn
 celery
 redis
 alembic>=1.11.1
+email-validator>=2.1.0.post1
 httpx
