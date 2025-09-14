@@ -2,7 +2,7 @@
 # + 1 job "aggregate-unit-coverage" pour combiner la couverture des shards unit
 # - Unit : parallélisé (matrix sharding x4 + xdist), DB SQLite in-memory
 # - Integration / E2E : stack Docker, migrations Alembic, tests exécutés côté host
-# - Pas d’upload Codecov (pas de compte requis). La couverture unit combinée est publiée en artifact.
+# - Pas d'upload Codecov (pas de compte requis). La couverture unit combinée est publiée en artifact.
 
 name: CI
 
@@ -113,15 +113,17 @@ jobs:
             echo "Moved .coverage -> $TGT"
           else
             echo "WARNING: no coverage data file produced for this shard"
-            : > "$TGT"   # placeholder (0 octet) pour que l'artifact existe
+            # Créer un fichier vide pour éviter les erreurs d'upload
+            : > "$TGT"
           fi
           ls -la .coverage*
 
-      - name: Upload raw coverage (shard)
+      # CORRECTION: Chaque shard upload son propre artifact avec un nom unique
+      - name: Upload raw coverage (shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: unit-coverage
+          name: unit-coverage-${{ matrix.shard }}
           path: .coverage.unit.${{ matrix.shard }}
 
   # ---------------------------------------------------------------------------
@@ -141,35 +143,59 @@ jobs:
       - name: Install coverage tool
         run: pip install coverage
 
-      - name: Download shard coverages
+      # CORRECTION: Télécharger chaque shard individuellement
+      - name: Download shard coverage 1
         uses: actions/download-artifact@v4
         with:
-          name: unit-coverage
-          path: unit_coverage
+          name: unit-coverage-1
+          path: coverage-files
+
+      - name: Download shard coverage 2
+        uses: actions/download-artifact@v4
+        with:
+          name: unit-coverage-2
+          path: coverage-files
+
+      - name: Download shard coverage 3
+        uses: actions/download-artifact@v4
+        with:
+          name: unit-coverage-3
+          path: coverage-files
+
+      - name: Download shard coverage 4
+        uses: actions/download-artifact@v4
+        with:
+          name: unit-coverage-4
+          path: coverage-files
+
+      - name: Debug downloaded files
+        run: |
+          echo "Downloaded files:"
+          find coverage-files -type f -ls || true
+          echo "Coverage files specifically:"
+          find coverage-files -name ".coverage*" -ls || true
 
       - name: Combine + report (unit)
         run: |
           set -euo pipefail
-          echo "Downloaded files:"
-          find unit_coverage -maxdepth 2 -type f -print || true
-
+          
           # Récupère tous les fichiers .coverage* non vides
-          mapfile -t files < <(find unit_coverage -type f -name '.coverage*' -size +0c)
+          mapfile -t files < <(find coverage-files -type f -name '.coverage*' -size +0c)
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "ERROR: No non-empty unit coverage files downloaded. Check shard jobs."
             exit 1
           fi
-          echo "Combining: ${files[*]}"
-          python -m pip install coverage >/dev/null
+          
+          echo "Combining coverage files: ${files[*]}"
           coverage combine "${files[@]}"
           coverage report -m
           coverage xml -o coverage-unit.xml
           coverage html -d htmlcov-unit
 
-      - name: Upload combined coverage (unit)
+      - name: Upload combined coverage XML
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-unit.xml
+          name: coverage-unit-xml
           path: coverage-unit.xml
 
       - name: Upload HTML report (unit)
