@@ -27,6 +27,7 @@ permissions:
   contents: read
 
 jobs:
+  
   # ---------------------------------------------------------------------------
   # 1) UNIT — INCHANGÉ (sharding + artifacts préservés)
   # ---------------------------------------------------------------------------
@@ -771,3 +772,13 @@ jobs:
           path: htmlcov-unit/
           if-no-files-found: ignore
 
+
+  # ---------------------------------------------------------------------------
+  # 5) FINAL GATE — INCHANGÉ (assure que tout est vert)
+  # ---------------------------------------------------------------------------
+  gate:
+    name: all-checks
+    runs-on: ubuntu-latest
+    needs: [unit, aggregate-unit-coverage, integration, e2e]  # <-- adapte si tes noms diffèrent
+    steps:
+      - run: echo "all green ✅"  
