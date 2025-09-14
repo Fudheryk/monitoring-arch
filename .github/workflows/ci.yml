@@ -209,33 +209,28 @@ jobs:
           TGT=".coverage.unit.${{ matrix.shard }}"
           echo "=== COVERAGE NORMALIZATION ==="
           echo "Target filename: $TGT"
-          echo "Current directory contents:"
-          ls -la || true
-          echo "Looking for coverage files:"
-          find . -maxdepth 1 -name ".coverage*" -ls || echo "No .coverage* files found"
-          
-          # Logique de normalisation
+          ls -la
+          find . -maxdepth 1 -name ".coverage*" -ls || true
           if [[ -f "$TGT" ]]; then
             echo "✓ Target file already exists: $TGT"
-            ls -la "$TGT"
           elif [[ -f ".coverage" ]]; then
             echo "→ Renaming .coverage to $TGT"
             mv .coverage "$TGT"
-            ls -la "$TGT"
           else
-            echo "⚠️ No coverage data found, creating empty placeholder"
-            echo "# Placeholder - no coverage data generated for shard ${{ matrix.shard }}" > "$TGT"
+            echo "# Placeholder - no coverage data" > "$TGT"
           fi
-          
-          # Vérification finale
-          if [[ ! -f "$TGT" ]]; then
-            echo "❌ FATAL: Target file still doesn't exist!"
-            exit 1
-          fi
-          
-          echo "✓ Coverage file ready: $TGT ($(wc -l < "$TGT" 2>/dev/null || echo "0") lines)"
+          # Nettoyage et permissions
+          rm -f .coverage || true
+          chmod 644 "$TGT"
+          ls -la "$TGT"
+        
+      - name: Verify coverage file exists before upload
+        run: |
+          echo "Listing .coverage.unit.${{ matrix.shard }} in workspace root:"
+          ls -l .coverage.unit.${{ matrix.shard }} || echo "❌ Not found"
+          echo "Workspace tree:"
+          find . -maxdepth 1 -type f -ls
 
-      # Upload avec un nom unique par shard
       - name: Upload raw coverage (shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@v4
@@ -243,8 +238,8 @@ jobs:
           name: coverage-shard-${{ matrix.shard }}
           path: .coverage.unit.${{ matrix.shard }}
           retention-days: 1
-          if-no-files-found: error  # STRICT: on veut savoir s'il manque
-
+          if-no-files-found: error
+        
   # ---------------------------------------------------------------------------
   # 1.bis) AGGREGATE — combine la couverture des 4 shards unit en un report
   # ---------------------------------------------------------------------------
