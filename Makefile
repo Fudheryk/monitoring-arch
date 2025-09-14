@@ -2,12 +2,31 @@
 # Variables
 # ---------------------------
 SHELL := /bin/bash
+
+# Endpoint/API key pour les tests "host"
 API ?= http://localhost:8000
 KEY ?= dev-apikey-123
+
+# Pytest & coverage CLIs
 PYTEST ?= pytest
-COMPOSE := docker compose -f docker/docker-compose.yml
 COVERAGE := python -m coverage
-COV ?= 70   # seuil de couverture combinée (host + API)
+
+# Fichiers docker-compose
+COMPOSE_BASE := docker compose -f docker/docker-compose.yml
+COMPOSE_COV  := docker compose -f docker/docker-compose.yml -f docker/docker-compose.coverage.yml
+
+# ✅ Sélecteur global : démarrer/manager la stack AVEC l'override coverage ?
+#   - Utilisation ponctuelle : WITH_COVERAGE=1 make stack-up
+#   - Par défaut (=0), on reste sur le compose "normal" (plus rapide en dev)
+WITH_COVERAGE ?= 0
+ifeq ($(WITH_COVERAGE),1)
+  COMPOSE := $(COMPOSE_COV)
+else
+  COMPOSE := $(COMPOSE_BASE)
+endif
+
+# Seuil de couverture combinée (utilisé par cov-combine)
+COV ?= 70
 
 # ---------------------------
 # Cibles "phony"
@@ -17,20 +36,21 @@ COV ?= 70   # seuil de couverture combinée (host + API)
         stack-up stack-down migrate \
         restart rebuild rebuild-nocache \
         ps logs shell-api shell-worker health smoke-http-targets \
-        cov-all cov-host cov-api-up cov-api-down cov-api-pull cov-combine cov-clean cov-html verify
+        cov-all cov-clean cov-api-up cov-migrate cov-host cov-api-down cov-combine cov-html \
+        verify
 
 # ---------------------------
 # Tests
 # ---------------------------
 
-# Alias pratique : tests unitaires
+# Alias : lance les tests unitaires
 test: test-unit
 
-# Tests unitaires
+# Tests unitaires (rapides, sans Docker)
 test-unit:
 	@$(PYTEST) -m unit -vv -ra
 
-# Tests d'intégration (variables d'env passées à pytest)
+# Tests d'intégration (env passées à pytest)
 # Deux alias : test-int et test-integ
 test-int test-integ:
 	@INTEG_STACK_UP=1 API=$(API) KEY=$(KEY) $(PYTEST) -m integration -vv -ra
@@ -58,10 +78,11 @@ fmt:
 # ---------------------------
 
 # Démarrer la stack (db, redis, api, worker, beat)
+# ⚙️ Respecte WITH_COVERAGE : ajoute/désactive l’override coverage.
 stack-up:
 	$(COMPOSE) up -d db redis api worker beat
 
-# Arrêter la stack
+# Arrêter la stack (sans -v pour garder les volumes en dev)
 stack-down:
 	$(COMPOSE) down
 
@@ -69,7 +90,7 @@ stack-down:
 restart:
 	$(COMPOSE) restart api worker beat
 
-# Rebuild images (si pyproject/Dockerfile/entrypoint changés)
+# Rebuild images (si Dockerfile/entrypoint changent)
 rebuild:
 	$(COMPOSE) build api worker beat
 	$(COMPOSE) up -d api worker beat
@@ -98,52 +119,52 @@ shell-worker:
 
 # Health check rapide (endpoint public)
 health:
-	@curl -sf $(API)/api/v1/health && echo "health OK" || (echo "health FAIL" && exit 1)
+	@curl -sf "$(API)/api/v1/health" && echo "health OK" || (echo "health FAIL" && exit 1)
 
+# Petit smoke-test HTTP targets (utilise API/KEY courants)
 smoke-http-targets:
-	@API?=http://localhost:8000 KEY?=dev-apikey-123 ./scripts/smoke_http_targets.sh
+	@API="$(API)" KEY="$(KEY)" ./scripts/smoke_http_targets.sh
 
 # ---------------------------
-# Coverage (host + API Docker [+ worker])
+# Coverage (host + containers)
 # ---------------------------
-
-# Démarrage optionnel du worker sous coverage : WITH_WORKER=1 make cov-all
-WITH_WORKER ?= 0
-# Timeouts SQL défensifs côté host durant les tests
-PGOPTIONS ?= -c lock_timeout=5s -c statement_timeout=60000
 
 # Nettoyage des artefacts de coverage
 cov-clean:
-	rm -f .coverage .coverage.host coverage.xml coverage-combined.xml
-	rm -rf htmlcov
-	# Important : supprimer aussi les anciennes data côté conteneurs montées dans /app/server
-	rm -f server/.coverage server/.coverage.api server/.coverage.worker
+	@rm -f .coverage .coverage.host coverage.xml coverage-combined.xml || true
+	@rm -rf htmlcov || true
+	# NB: supprimer aussi les data écrites depuis les conteneurs (montées dans ./server)
+	@rm -f server/.coverage server/.coverage.api server/.coverage.worker server/.coverage.beat || true
 
-# Monte DB/Redis/API (et worker) SOUS COVERAGE et attend l'API
-# - API_COVERAGE est lu par l'image/entrypoint : si =1, l'API démarre sous coverage et écrit /app/server/.coverage.api
-# - WORKER_COVERAGE idem pour le worker, qui écrit /app/server/.coverage.worker*
-# - COVERAGE_FILE permet de nommer les fichiers émis par chaque service (utile pour les distinguer)
+# Monte DB/Redis/API SOUS COVERAGE et attend l'API healthy.
+# - Force l’override coverage, indépendamment de WITH_COVERAGE (pour un pipeline reproductible).
 cov-api-up:
-	API_COVERAGE=1 COVERAGE_FILE=/app/server/.coverage.api $(COMPOSE) up -d db redis api
-	@echo "⏳ Attente de l'API (healthcheck Docker)…"
+	@echo "▶️  Bringing up stack WITH coverage override (db, redis, api)…"
+	@API_COVERAGE=1 COVERAGE_FILE=/app/server/.coverage.api $(COMPOSE_COV) up -d db redis api
+	@echo "⏳ Waiting for API health (Docker healthcheck)…"
 	@for i in $$(seq 1 30); do \
-		docker inspect --format='{{json .State.Health.Status}}' $$($(COMPOSE) ps -q api) 2>/dev/null | grep -q healthy && exit 0; \
-		sleep 1; \
+	  cid="$$( $(COMPOSE_COV) ps -q api )"; \
+	  if [ -n "$$cid" ] && docker inspect --format='{{json .State.Health.Status}}' "$$cid" 2>/dev/null | grep -q healthy; then \
+	    echo "✅ API is healthy"; \
+	    exit 0; \
+	  fi; \
+	  sleep 1; \
 	done; \
 	echo "❌ API unhealthy"; exit 1
-	@if [ "$(WITH_WORKER)" = "1" ]; then \
-		echo "▶️  Lancement du worker sous coverage…"; \
-		WORKER_COVERAGE=1 COVERAGE_FILE=/app/server/.coverage.worker $(COMPOSE) up -d worker; \
-	fi
+
+# (Optionnel) lancer le worker sous coverage (utile si vos tests déclenchent des tâches async)
+cov-worker-up:
+	@echo "▶️  Starting worker WITH coverage override…"
+	@WORKER_COVERAGE=1 COVERAGE_FILE=/app/server/.coverage.worker $(COMPOSE_COV) up -d worker
 
 # (Optionnel) migrations pour assurer que l'API a le schéma attendu
 cov-migrate:
-	$(COMPOSE) exec -T api alembic upgrade head
+	$(COMPOSE_COV) exec -T api alembic upgrade head
 
 # Tests côté hôte (produit ./.coverage.host)
+# - combine unicast: unit + integration (modulable via -m)
 cov-host:
-	INTEG_STACK_UP=1 API=$(API) KEY=$(KEY) \
-	PGOPTIONS="$(PGOPTIONS)" \
+	@INTEG_STACK_UP=1 API="$(API)" KEY="$(KEY)" \
 	PYTEST_ADDOPTS="--timeout=120 --timeout-method=thread" \
 	COVERAGE_FILE=.coverage.host COVERAGE_RCFILE=.coveragerc \
 	$(PYTEST) -vv -rA -m "unit or integration" \
@@ -152,14 +173,12 @@ cov-host:
 
 # Stoppe les services qui écrivent du coverage pour flusher les fichiers
 cov-api-down:
-	$(COMPOSE) stop api || true
-	@if [ "$(WITH_WORKER)" = "1" ]; then \
-		$(COMPOSE) stop worker || true; \
-	fi
+	@$(COMPOSE_COV) stop api || true
+	@$(COMPOSE_COV) stop worker || true
+	@$(COMPOSE_COV) stop beat || true
 
-# Combine HOST + API (+ WORKER si présent) puis génère rapport + XML
-# - On tolère l'absence de certains fichiers (selon ce qui a tourné)
-# - On applique un seuil global (--fail-under)
+# Combine HOST + API (+ WORKER/BEAT si présents) puis génère rapport + XML.
+# - Tolère l’absence de certains fragments (selon ce qui a tourné).
 cov-combine:
 	@set -euo pipefail; \
 	files=""; \
@@ -171,16 +190,19 @@ cov-combine:
 	  echo "❌ Aucun fichier coverage trouvé à combiner"; exit 1; \
 	fi; \
 	echo "⏳ Combine coverage: $$files"; \
-	COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc \
-	  $(COVERAGE) combine -q $$files; \
-	COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc \
-	  $(COVERAGE) report -m --fail-under=$(FAIL_UNDER); \
-	COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc \
-	  $(COVERAGE) xml -o coverage.xml
+	COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc $(COVERAGE) combine -q $$files; \
+	COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc $(COVERAGE) report -m --fail-under=$(COV); \
+	COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc $(COVERAGE) xml -o coverage.xml
 
-# Pipeline complet (local) : clean → up (API+worker) → migrate → tests host → stop → combine
+# Rapport HTML local (après cov-combine)
+cov-html:
+	@COVERAGE_FILE=.coverage COVERAGE_RCFILE=.coveragerc $(COVERAGE) html
+	@echo "📂 Rapport HTML: ./htmlcov/index.html"
+
+# Pipeline complet (local) : clean → up (API) → (worker opt.) → migrate → tests host → stop → combine
+# - Activer le worker si nécessaire : make cov-all cov-worker-up=1   (ou directement `make cov-worker-up` avant)
 cov-all: cov-clean cov-api-up cov-migrate cov-host cov-api-down cov-combine
 
-# Full verification
+# Full verification (déporte sur le script existant si vous l’utilisez encore)
 verify:
-	BUILD=$(BUILD) THRESHOLD=$(THRESHOLD) bash scripts/verify_all.sh
+	@BUILD=$(BUILD) THRESHOLD=$(COV) bash scripts/verify_all.sh

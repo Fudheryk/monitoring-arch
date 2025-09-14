@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
+#  ─────────────────────────────────────────────────────────────────────────────
 # Vérif globale: unit -> (stack up) -> integration -> e2e -> combine coverage -> (stack down)
-# - crée un venv "CI-like" (.venv-ci), installe deps (+ psycopg)
-# - force PYTHONPATH=server pour que "app.*" soit importable
-# - unit: SQLite in-memory, couverture stricte (fail-under via THRESHOLD)
-# - integ/e2e: stack Docker (db/redis/api/worker), migrations Alembic, tests host
-# - combine: coverage host + fragments écrits par les containers dans ./server
+# - Crée/active un venv "CI-like" (.venv-ci) et installe les deps (dont psycopg)
+# - Force PYTHONPATH=server pour que "app.*" soit importable
+# - Unit  : SQLite in-memory, coverage stricte (fail-under=60 ici, puis seuil global)
+# - Integ/E2E : stack Docker (db/redis/api/worker), migrations Alembic, tests host
+# - Combine : coverage host + fragments écrits par les containers sous ./server
+# - Utilise *toujours* l'override docker-compose.coverage.yml pour capturer la
+#   couverture côté API/worker.
+#  ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 # --- Config -------------------------------------------------------------------
@@ -19,8 +23,12 @@ log() { printf "\n\033[1;34m[%s]\033[0m %s\n" "verify" "$*"; }
 
 cleanup_coverage() {
   log "nettoyage fragments de coverage…"
+  # fragments host (racine)
   find "$PROJECT_ROOT" -maxdepth 1 -type f -name ".coverage*" ! -name ".coveragerc" -print -delete || true
+  # fragments containers (montés dans ./server)
   find "$PROJECT_ROOT/server" -maxdepth 1 -type f -name ".coverage*" ! -name ".coveragerc" -print -delete || true
+  rm -rf "$PROJECT_ROOT/htmlcov" || true
+  rm -f  "$PROJECT_ROOT/coverage.xml" || true
 }
 
 wait_api() {
@@ -36,9 +44,14 @@ wait_api() {
   return 1
 }
 
+# Wrapper docker compose (toujours avec l'override coverage)
 dc() {
-  # wrapper docker compose à la racine docker/
-  ( cd "$PROJECT_ROOT/docker" && docker compose "$@" )
+  # on ajoute systématiquement le fichier coverage pour que l’API/worker
+  #      émettent des fichiers .coverage.* dans ./server
+  ( cd "$PROJECT_ROOT/docker" && docker compose \
+      -f docker-compose.yml \
+      -f docker-compose.coverage.yml \
+      "$@" )
 }
 
 ensure_env_docker() {
@@ -63,6 +76,13 @@ ensure_env_docker() {
     mv "$PROJECT_ROOT/.env.docker.tmp" "$PROJECT_ROOT/.env.docker"
   fi
   cp "$PROJECT_ROOT/.env.docker" "$PROJECT_ROOT/docker/.env.docker"
+}
+
+dump_logs_on_error() {
+  echo "──── docker compose ps";         (cd "$PROJECT_ROOT/docker" && docker compose ps) || true
+  echo "──── api logs (tail 200)";      (cd "$PROJECT_ROOT/docker" && docker compose logs api    | tail -n 200) || true
+  echo "──── worker logs (tail 200)";   (cd "$PROJECT_ROOT/docker" && docker compose logs worker | tail -n 200) || true
+  echo "──── db logs (tail 120)";       (cd "$PROJECT_ROOT/docker" && docker compose logs db     | tail -n 120) || true
 }
 
 # --- Start --------------------------------------------------------------------
@@ -92,7 +112,7 @@ pytest -m "unit" -n auto \
   --cov=server/app --cov-report=term-missing --cov-config=.coveragerc --cov-branch \
   --cov-fail-under=60
 
-# 2) STACK UP (db/redis/api/worker) + migrations
+# 2) STACK UP (db/redis/api/worker) + migrations (toujours avec override coverage)
 log "docker compose up…"
 ensure_env_docker
 if [[ "$BUILD" == "1" ]]; then
@@ -104,7 +124,7 @@ fi
 # Stopper proprement à la fin quoi qu’il arrive
 trap 'log "docker compose down -v"; dc --env-file ../.env.docker down -v || true' EXIT
 
-# Wait DB
+# Wait DB ready
 log "attente DB (pg_isready)…"
 for i in {1..60}; do
   if dc --env-file ../.env.docker exec -T db pg_isready -U postgres >/dev/null 2>&1; then
@@ -115,9 +135,11 @@ done
 
 # Migrations Alembic dans le conteneur API (chemins typiques de ton projet)
 log "alembic upgrade head (dans le conteneur api)…"
-dc --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
+if ! dc --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head; then
+  echo "❌ Alembic upgrade failed"; dump_logs_on_error; exit 1
+fi
 
-# Wait API
+# Wait API healthy (healthcheck)
 wait_api
 
 # 3) INTEGRATION TESTS (host)
@@ -141,6 +163,11 @@ pytest -m "e2e" \
   --cov=server/app --cov-report=term-missing --cov-config=.coveragerc --cov-branch \
   --cov-append --cov-fail-under=0
 
+# ⚠️ IMPORTANT : stop API/worker pour *flusher* les fichiers coverage côté containers
+log "stop API/worker (flush coverage data)…"
+dc --env-file ../.env.docker stop api || true
+dc --env-file ../.env.docker stop worker || true
+
 # 5) COMBINE COVERAGE (host + fragments containers)
 log "combine coverage (host + containers)…"
 files=""
@@ -150,7 +177,10 @@ api_worker_files="$(find server -maxdepth 1 -type f -name '.coverage*' ! -name '
 files="$files$api_worker_files"
 
 if [[ -z "${files// /}" ]]; then
-  echo "❌ Aucun fichier coverage trouvé à combiner"; exit 1;
+  echo "❌ Aucun fichier coverage trouvé à combiner"
+  echo "📂 Debug list:"
+  ls -la . server || true
+  exit 1
 fi
 
 log "⏳ Combine: $files"
