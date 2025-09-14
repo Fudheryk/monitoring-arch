@@ -9,10 +9,14 @@
 #   d'éviter les SKIP en local quand la stack tourne déjà.
 # -------------------------------------------------------------------
 
+from __future__ import annotations
+
 import os
 import pytest
 
+
 @pytest.fixture(scope="session", autouse=True)
-def _set_e2e_env_defaults():
+def _set_e2e_env_defaults() -> None:
     # Laisse la CI/ton shell surcharger si besoin.
+    # Par défaut on *active* le flag en E2E pour éviter les SKIP.
     os.environ.setdefault("E2E_STACK_UP", os.getenv("E2E_STACK_UP", "1"))

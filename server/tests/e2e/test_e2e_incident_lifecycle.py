@@ -81,6 +81,14 @@ def test_e2e_alert_flow_with_monkeypatch(monkeypatch):
         "postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5",
     )
 
+    import importlib
+    import app.core.config as cfg
+    import app.infrastructure.persistence.database.session as sess
+    importlib.reload(cfg)
+    importlib.reload(sess)
+
+    from app.application.services.http_monitor_service import check_http_targets
+
     # 1) route des targets
     base = _targets_base()  # ex: /api/v1/http-targets
 

@@ -48,3 +48,6 @@ docker/.env.docker
 
 # Celery
 server/celerybeat-schedule
+
+# local venv
+.venv-ci/

@@ -1,11 +1,7 @@
-# .github/workflows/ci.yml
-# ─────────────────────────────────────────────────────────────────────────────
-# CI en 3 jobs : unit → integration (Docker) → e2e (Docker)
-# - On prépare et on utilise **.env.docker** partout dans la CI.
-# - L’intégration utilise le Makefile (cov-all) pour capturer la couverture
-#   côté hôte + API + worker, puis combine et produit coverage.xml.
-# ─────────────────────────────────────────────────────────────────────────────
-
+# CI en 3 jobs : unit → integration → e2e
+# - Debug/Imports exécutés APRES checkout et avec PYTHONPATH=server
+# - Unit: SQLite in-memory, couverture stricte uniquement sur unit
+# - Integration/E2E: stack Docker + migrations + tests host
 name: CI
 
 on:
@@ -21,17 +17,20 @@ permissions:
   contents: read
 
 jobs:
-  # ============================================================
-  # 1) UNIT — tests rapides sans Docker
-  # ============================================================
+  # -----------------------------
+  # 1) UNIT — sans Docker
+  # -----------------------------
   unit:
     runs-on: ubuntu-latest
     env:
+      PYTHONPATH: server
+      ENV_FILE: /dev/null
+      DATABASE_URL: 'sqlite+pysqlite:///:memory:'
+      REDIS_URL: redis://localhost:6379/0
       STUB_SLACK: "1"
       ALERT_REMINDER_MINUTES: "1"
       KEY: dev-apikey-123
       API: http://localhost:8000
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,10 +52,29 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
           restore-keys: ${{ runner.os }}-pip-
 
-      - name: Install project deps (unit tests)
+      - name: Install project deps (unit)
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+
+      - name: Debug env & settings (after checkout)
+        env:
+          PYTHONPATH: server
+        run: |
+          echo "PYTHONPATH=${PYTHONPATH}"
+          echo "ENV_FILE=${ENV_FILE}"
+          echo "DATABASE_URL=${DATABASE_URL}"
+          python - <<'PY'
+          import os, sys
+          print("ENV_FILE      =", os.getenv("ENV_FILE"))
+          print("DATABASE_URL  =", os.getenv("DATABASE_URL"))
+          print("sys.path[:3]  =", sys.path[:3])
+          try:
+              from app.core.config import settings
+              print("settings.DATABASE_URL =", getattr(settings, "DATABASE_URL", None) or getattr(settings, "database_url", None))
+          except Exception as e:
+              print("Import settings FAILED:", e)
+          PY
 
       - name: Run unit tests (xdist)
         env:
@@ -64,12 +82,12 @@ jobs:
           STUB_SLACK: "1"
           ALERT_REMINDER_MINUTES: "1"
           SLACK_WEBHOOK: "http://httpbin:80/status/204"
+          PYTHONPATH: server
         run: |
           pytest -m "unit" -n auto \
             --cov=server/app --cov-config=.coveragerc \
             --cov-report=term-missing --cov-report=xml \
-            --cov-fail-under=60 \
-            --maxfail=1
+            --cov-fail-under=60 --maxfail=1
 
       - name: Upload coverage xml (unit)
         uses: actions/upload-artifact@v4
@@ -85,10 +103,9 @@ jobs:
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  # ============================================================
-  # 2) INTEGRATION — démarre la stack Docker, exécute les tests,
-  #    capture la couverture API + worker, et la combine avec host
-  # ============================================================
+  # ----------------------------------------
+  # 2) INTEGRATION — Docker + migrations
+  # ----------------------------------------
   integration:
     runs-on: ubuntu-latest
     needs: unit
@@ -98,7 +115,6 @@ jobs:
       KEY: dev-apikey-123
       API: http://localhost:8000
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -125,12 +141,12 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
           restore-keys: ${{ runner.os }}-pip-
 
-      - name: Install project deps (integration tests)
+      - name: Install project deps (integration)
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+          pip install "psycopg[binary]>=3.1,<4.0"
 
-      # Prépare .env.docker (CI) → utilisé par docker compose
       - name: Prepare root .env.docker from example
         run: |
           if [ -f .env.example ]; then
@@ -139,40 +155,63 @@ jobs:
             echo "ERROR: .env.example is missing at repo root" >&2
             exit 1
           fi
-          awk 'BEGIN{printed_slack=0; printed_reminder=0}
-              /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; printed_slack=1; next}
-              /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; printed_reminder=1; next}
-              {print}
-              END{
-                if(!printed_slack)    print "SLACK_WEBHOOK=http://httpbin:80/status/204";
-                if(!printed_reminder) print "ALERT_REMINDER_MINUTES=1";
-                print "STUB_SLACK=1";
-              }' .env.docker > .env.ci
-          mv .env.ci .env.docker
+          awk 'BEGIN{pslack=0; prem=0}
+               /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; pslack=1; next}
+               /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; prem=1; next}
+               {print}
+               END{
+                 if(!pslack) print "SLACK_WEBHOOK=http://httpbin:80/status/204";
+                 if(!prem)   print "ALERT_REMINDER_MINUTES=1";
+                 print "STUB_SLACK=1";
+               }' .env.docker > .env.ci && mv .env.ci .env.docker
           cp .env.docker docker/.env.docker
           sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env.docker
 
-      # 🔥 Pipeline coverage via Makefile : up (API+worker) → migrate → tests host → stop → combine
-      - name: Run integration coverage pipeline (cov-all)
+      - name: Start stack (db/redis/api/worker)
+        working-directory: docker
+        run: docker compose --env-file ../.env.docker up -d --build db redis api worker
+
+      - name: Wait for DB
+        working-directory: docker
+        run: |
+          for i in {1..60}; do
+            docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres && break
+            sleep 2
+          done
+
+      - name: Run Alembic migrations
+        working-directory: docker
+        run: docker compose --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
+
+      - name: Wait for API
+        run: |
+          for i in {1..60}; do
+            curl -fsS -m 2 -H "X-API-Key: $KEY" "$API/api/v1/health" && exit 0
+            sleep 2
+          done
+          exit 1
+
+      - name: Sanity env for DB (integration)
         env:
+          PYTHONPATH: server
+          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
+        run: |
+          echo "DATABASE_URL=$DATABASE_URL"
+          python - <<'PY'
+          import os
+          print("ENV DATABASE_URL =", os.getenv("DATABASE_URL"))
+          from app.core.config import settings
+          print("settings.DATABASE_URL =", settings.DATABASE_URL)
+          PY
+
+      - name: Run integration tests (host)
+        env:
+          PYTHONPATH: server
           API: ${{ env.API }}
           KEY: ${{ env.KEY }}
+          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
         run: |
-          WITH_WORKER=1 make cov-all
-
-      - name: Upload coverage xml (integration)
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-integration.xml
-          path: coverage.xml
-
-      - name: Upload to Codecov (integration)
-        uses: codecov/codecov-action@v4
-        with:
-          files: coverage.xml
-          flags: integration
-          fail_ci_if_error: true
-          token: ${{ secrets.CODECOV_TOKEN }}
+          pytest -m "integration" --no-cov --maxfail=1
 
       - name: Dump docker logs on failure
         if: failure()
@@ -188,10 +227,9 @@ jobs:
         working-directory: docker
         run: docker compose --env-file ../.env.docker down -v
 
-  # ============================================================
-  # 3) E2E — redémarre la stack et lance seulement les tests e2e
-  #     (pas de combine ici, on laisse Codecov agréger)
-  # ============================================================
+  # -----------------------------
+  # 3) E2E — Docker + tests
+  # -----------------------------
   e2e:
     runs-on: ubuntu-latest
     needs: integration
@@ -201,7 +239,6 @@ jobs:
       KEY: dev-apikey-123
       API: http://localhost:8000
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -228,10 +265,11 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
           restore-keys: ${{ runner.os }}-pip-
 
-      - name: Install project deps (e2e tests)
+      - name: Install project deps (e2e)
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+          pip install "psycopg[binary]>=3.1,<4.0"
 
       - name: Prepare root .env.docker from example
         run: |
@@ -241,34 +279,33 @@ jobs:
             echo "ERROR: .env.example is missing at repo root" >&2
             exit 1
           fi
-          awk 'BEGIN{printed_slack=0; printed_reminder=0}
-              /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; printed_slack=1; next}
-              /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; printed_reminder=1; next}
-              {print}
-              END{
-                if(!printed_slack)    print "SLACK_WEBHOOK=http://httpbin:80/status/204";
-                if(!printed_reminder) print "ALERT_REMINDER_MINUTES=1";
-                print "STUB_SLACK=1";
-              }' .env.docker > .env.ci
-          mv .env.ci .env.docker
+          awk 'BEGIN{pslack=0; prem=0}
+               /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; pslack=1; next}
+               /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; prem=1; next}
+               {print}
+               END{
+                 if(!pslack) print "SLACK_WEBHOOK=http://httpbin:80/status/204";
+                 if(!prem)   print "ALERT_REMINDER_MINUTES=1";
+                 print "STUB_SLACK=1";
+               }' .env.docker > .env.ci && mv .env.ci .env.docker
           cp .env.docker docker/.env.docker
           sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env.docker
 
-      - name: Start stack (docker compose - services minimaux)
+      - name: Start stack (db/redis/api)
         working-directory: docker
         run: docker compose --env-file ../.env.docker up -d --build db redis api
 
       - name: Wait for DB
         working-directory: docker
         run: |
-          for i in {1..30}; do
+          for i in {1..60}; do
             docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres && break
             sleep 2
           done
 
       - name: Run Alembic migrations
         working-directory: docker
-        run: docker compose run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
+        run: docker compose --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
 
       - name: Wait for API to be healthy
         run: |
@@ -277,7 +314,20 @@ jobs:
             sleep 2
           done
           exit 1
-      
+
+      - name: Sanity env for DB (e2e)
+        env:
+          PYTHONPATH: server
+          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
+        run: |
+          echo "DATABASE_URL=$DATABASE_URL"
+          python - <<'PY'
+          import os
+          print("ENV DATABASE_URL =", os.getenv("DATABASE_URL"))
+          from app.core.config import settings
+          print("settings.DATABASE_URL =", settings.DATABASE_URL)
+          PY
+
       - name: HTTP targets smoke
         env:
           API: ${{ env.API }}
@@ -286,29 +336,14 @@ jobs:
 
       - name: Run E2E tests
         env:
+          PYTHONPATH: server
           API: ${{ env.API }}
           KEY: ${{ env.KEY }}
           STUB_SLACK: "1"
           ALERT_REMINDER_MINUTES: "1"
+          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
         run: |
-          pytest -m "e2e" \
-            --cov=server/app --cov-config=.coveragerc \
-            --cov-report=term-missing --cov-report=xml \
-            --maxfail=1
-
-      - name: Upload coverage xml (e2e)
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-e2e.xml
-          path: coverage.xml
-
-      - name: Upload to Codecov (e2e)
-        uses: codecov/codecov-action@v4
-        with:
-          files: coverage.xml
-          flags: e2e
-          fail_ci_if_error: true
-          token: ${{ secrets.CODECOV_TOKEN }}
+          pytest -m "e2e" --no-cov --maxfail=1
 
       - name: Dump docker logs on failure
         if: failure()
@@ -316,7 +351,6 @@ jobs:
         run: |
           docker compose ps || true
           docker compose logs api | tail -n 400 || true
-          docker compose logs worker | tail -n 400 || true
           docker compose logs db | tail -n 200 || true
 
       - name: Stop stack

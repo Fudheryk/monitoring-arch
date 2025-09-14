@@ -3,19 +3,22 @@
 Conftest *global* pour toute la suite de tests.
 
 Points clés :
-- Bootstrap PYTHONPATH pour que 'server' soit importable partout (corrige "No module named 'server'").
-- Centralise les options pytest (--api, --api-key) pour éviter le bug "option already added".
-- Fournit des fixtures communes à tous les tests (api_base, api_headers, session_retry, wait).
-- Pour les tests @unit uniquement :
-  - Définit des ENV sûres (pas d'appels externes) + DATABASE_URL SQLite in-memory.
-  - Active Celery en mode "eager" (exécution in-process).
-  - Monte une DB SQLite in-memory partagée + Base.create_all.
-  - Patch FORT de la pile DB : get_sync_session, SessionLocal, engine (module session + modules consommateurs).
-  - Mocke Slack (provider + tâches).
-- Fournit un db_cursor psycopg pour certains tests d'intégration qui le demandent explicitement.
+- Bootstrap PYTHONPATH pour que 'app' (sous server/app) soit importable partout.
+- Centralise les options pytest (--api, --api-key).
+- Fixtures communes : api_base, api_headers, session_retry, wait.
+- Pour les tests *unit* :
+  - ENV sûres (pas d'appels externes) + DATABASE_URL SQLite in-memory.
+  - Celery en mode "eager".
+  - DB SQLite in-memory partagée + Base.create_all.
+  - Patch FORT de la pile DB (session & consommateurs).
+  - Mock Slack provider/tâches (fixture `mock_slack`).
+- Fournit un db_cursor psycopg (pour certains tests d'intégration explicites).
 """
 
+from __future__ import annotations
+
 import os
+import sys
 import time
 import importlib
 import pkgutil
@@ -31,21 +34,40 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# PYTHONPATH : rendre `app.*` importable quand on lance pytest à la racine
+# ─────────────────────────────────────────────────────────────────────────────
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SERVER_DIR = os.path.join(ROOT, "server")
+if SERVER_DIR not in sys.path:
+    sys.path.insert(0, SERVER_DIR)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Helpers
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 def _is_unit(request: pytest.FixtureRequest) -> bool:
-    """True si le test courant est marqué @pytest.mark.unit."""
-    return request.node.get_closest_marker("unit") is not None
+    """
+    True si le test est marqué @pytest.mark.unit *ou* s'il se trouve sous /tests/unit/.
+    (Robuste même si un marqueur a été oublié.)
+    """
+    if request.node.get_closest_marker("unit") is not None:
+        return True
+    try:
+        p = str(request.node.fspath)
+        p = p.replace("\\", "/")
+        return "/tests/unit/" in p
+    except Exception:
+        return False
 
 
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 # Options CLI & defaults globaux (UNE seule déclaration)
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 def pytest_addoption(parser):
     """
-    Déclare --api et --api-key UNE seule fois pour toute la suite (évite 'already added').
-    Utilisé par les fixtures 'api_base' et 'api_headers'.
+    Déclare --api et --api-key pour toute la suite (évite 'already added').
+    Utilisé par 'api_base' et 'api_headers'.
     """
     parser.addoption("--api", action="store", default=os.getenv("API", "http://localhost:8000"))
     parser.addoption("--api-key", action="store", default=os.getenv("KEY", "dev-apikey-123"))
@@ -55,18 +77,18 @@ def pytest_addoption(parser):
 def _set_global_env_defaults():
     """
     Valeurs par défaut raisonnables pour un usage local.
-    En CI, ces variables sont déjà définies par le workflow.
+    (En CI, ces variables sont déjà définies par le workflow.)
     """
     os.environ.setdefault("API", "http://localhost:8000")
     os.environ.setdefault("KEY", "dev-apikey-123")
-    # Garde-fous utilisés par certains tests pour éviter des SKIP intempestifs
-    os.environ.setdefault("INTEG_STACK_UP", os.getenv("INTEG_STACK_UP", "1"))
-    os.environ.setdefault("E2E_STACK_UP", os.getenv("E2E_STACK_UP", "1"))
+    # Par défaut on *n'exécute pas* integ/e2e si non demandés explicitement
+    os.environ.setdefault("INTEG_STACK_UP", os.getenv("INTEG_STACK_UP", "0"))
+    os.environ.setdefault("E2E_STACK_UP", os.getenv("E2E_STACK_UP", "0"))
 
 
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 # Fixtures communes : API + requests.Session avec retries + helper 'wait'
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.fixture(scope="session")
 def api_base(pytestconfig) -> str:
     return pytestconfig.getoption("--api")
@@ -80,7 +102,7 @@ def api_headers(pytestconfig) -> dict:
 @pytest.fixture(scope="session")
 def session_retry() -> requests.Session:
     """
-    Session HTTP robuste avec backoff & retries (utile pour les integ/E2E).
+    Session HTTP robuste avec backoff & retries (utile pour integ/E2E).
     """
     s = requests.Session()
     retries = Retry(
@@ -98,7 +120,7 @@ def session_retry() -> requests.Session:
 @pytest.fixture
 def wait():
     """
-    Helper simple : poll une fonction jusqu'à ce qu'elle renvoie une valeur truthy.
+    Helper simple : poll une fonction jusqu'à valeur truthy.
     """
     def _wait(fn, timeout=90, every=2):
         deadline = time.time() + timeout
@@ -114,43 +136,54 @@ def wait():
     return _wait
 
 
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 # UNIT-ONLY: ENV sûres (pas d'appels externes) + DATABASE_URL SQLite
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.fixture(autouse=True)
 def unit_env(request):
     """
-    En unit : fixe des ENV sûres pour ne jamais appeler l'extérieur.
-    Définit aussi une DATABASE_URL SQLite in-memory si non fournie, au cas où
-    le code lit directement l'ENV (avant nos patchs).
+    En unit : fixe des ENV sûres + DATABASE_URL SQLite in-memory si non fournie.
     Hors unit : ne fait rien.
     """
     if not _is_unit(request):
         return
+    os.environ.setdefault("ENV_FILE", "/dev/null")
     os.environ.setdefault("SLACK_WEBHOOK", "http://example.invalid/webhook")
     os.environ.setdefault("SLACK_DEFAULT_CHANNEL", "#notif-webhook")
     os.environ.setdefault("ALERT_REMINDER_MINUTES", "1")
     os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+    os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "1")
+
+    # Si settings/session ont pu être importés trop tôt, reload "best effort"
+    try:
+        if "app.core.config" in sys.modules:
+            importlib.reload(sys.modules["app.core.config"])
+        dbmod = sys.modules.get("app.infrastructure.persistence.database.session")
+        if dbmod:
+            for attr in ("_engine", "_SessionLocal"):
+                if hasattr(dbmod, attr):
+                    setattr(dbmod, attr, None)
+            importlib.reload(dbmod)
+    except Exception:
+        pass
 
 
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 # UNIT-ONLY: Celery en mode "eager" (tâches exécutées in-process)
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.fixture(autouse=True)
 def celery_eager(request):
     """
-    Active le mode 'eager' de Celery en unit (tâches exécutées in-process).
-    ⚠️ Comme c'est un fixture générateur, il DOIT toujours 'yield', même hors unit.
+    Active le mode 'eager' de Celery en unit.
     """
     if not _is_unit(request):
-        # Pas de setup, mais on yield quand même pour satisfaire pytest.
         yield
         return
 
     try:
         from app.workers.celery_app import celery  # type: ignore
     except Exception:
-        # Si Celery n'est pas importable, on ne casse pas les tests unitaires.
         yield
         return
 
@@ -165,14 +198,14 @@ def celery_eager(request):
         celery.conf.task_eager_propagates = prev_propag
 
 
-# ============================================================================
-# UNIT-ONLY: DB SQLite in-memory partagée + Base.metadata.create_all
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# UNIT-ONLY: DB SQLite in-memory partagée + Base.create_all
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.fixture(scope="session")
 def _sqlite_engine_unit():
     """
-    Engine in-memory **partagé** entre connexions (StaticPool + check_same_thread=False)
-    + activation des contraintes FK sur chaque connexion.
+    Engine in-memory **partagé** (StaticPool + check_same_thread=False)
+    + activation des contraintes FK.
     """
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -185,7 +218,7 @@ def _sqlite_engine_unit():
     def _set_sqlite_pragma(dbapi_connection, connection_record):  # noqa: ARG001
         dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
-    # Charger tous les modèles avant create_all (import dynamique robuste)
+    # Importer tous les modèles avant create_all
     from app.infrastructure.persistence.database import base as db_base  # type: ignore
     from app.infrastructure.persistence.database import models as models_pkg  # type: ignore
 
@@ -200,9 +233,7 @@ def _sqlite_engine_unit():
 
 @pytest.fixture(scope="session")
 def _Session_unit(_sqlite_engine_unit):
-    """
-    Retourne un sessionmaker lié au moteur SQLite in-memory.
-    """
+    """Sessionmaker lié au moteur SQLite in-memory."""
     return sessionmaker(
         bind=_sqlite_engine_unit,
         future=True,
@@ -214,8 +245,7 @@ def _Session_unit(_sqlite_engine_unit):
 @pytest.fixture
 def Session(request, _Session_unit):
     """
-    Fournit un sessionmaker à utiliser comme `with Session() as s:` pour les tests unitaires.
-    Sera *skippé* s'il est injecté dans un test non marqué @unit (sécurité d'usage).
+    Fournit un sessionmaker pour les tests unitaires.
     """
     if not _is_unit(request):
         pytest.skip("Session fixture is only available for unit tests")
@@ -225,17 +255,10 @@ def Session(request, _Session_unit):
 # Purge DB entre tests unitaires (évite les fuites d'état)
 @pytest.fixture(autouse=True)
 def _clear_db_between_unit_tests(request, _Session_unit):
-    """
-    Après chaque test unitaire, on supprime le contenu de toutes les tables.
-    ⚠️ Générateur : doit 'yield' aussi hors unit.
-    """
     if not _is_unit(request):
         yield
         return
-
-    # --- setup (avant test) : rien ---
-    yield  # exécution du test
-    # --- teardown (après test) ---
+    yield
     from app.infrastructure.persistence.database import base as db_base  # type: ignore
     with _Session_unit() as s:
         for table in reversed(db_base.Base.metadata.sorted_tables):
@@ -243,22 +266,16 @@ def _clear_db_between_unit_tests(request, _Session_unit):
         s.commit()
 
 
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 # UNIT-ONLY: Patch DB fort (get_sync_session + SessionLocal + engine)
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.fixture(autouse=True)
 def patch_db_stack_for_unit(request, monkeypatch, _Session_unit, _sqlite_engine_unit):
     """
-    Rend *impossible* l'usage de Postgres pendant les tests unitaires.
-    On remplace, dans les modules sensibles :
-      - get_sync_session -> contextmanager qui yield une session SQLite
-      - SessionLocal     -> sessionmaker SQLite
-      - engine           -> engine SQLite
-
-    ⚠️ Très important : certains modules importent/figent ces symboles à l'import.
-    Il faut donc aussi patcher ces modules *consommateurs* afin d'écraser leur
-    référence locale (ex: `from ...session import get_sync_session`). Sans ça,
-    ils continueraient à viser Postgres.
+    Remplace Postgres par SQLite pour *tout* le code pendant les tests unitaires.
+    Patch :
+      - module source 'session' (get_sync_session, SessionLocal, engine)
+      - modules consommateurs qui ont figé ces symboles à l'import.
     """
     if not _is_unit(request):
         return
@@ -268,7 +285,7 @@ def patch_db_stack_for_unit(request, monkeypatch, _Session_unit, _sqlite_engine_
         with _Session_unit() as s:
             yield s
 
-    # 1) Module source 'session' (remplace les symboles à la source)
+    # 1) Module source 'session'
     try:
         sess_mod = importlib.import_module("app.infrastructure.persistence.database.session")
         monkeypatch.setattr(sess_mod, "get_sync_session", _fake_get_sync_session, raising=False)
@@ -277,7 +294,7 @@ def patch_db_stack_for_unit(request, monkeypatch, _Session_unit, _sqlite_engine_
     except Exception:
         pass
 
-    # 2) Modules qui peuvent avoir importé/figé ces symboles à l'import
+    # 2) Modules consommateurs (références figées)
     to_patch = [
         # repositories
         "app.infrastructure.persistence.repositories.alert_repository",
@@ -294,8 +311,8 @@ def patch_db_stack_for_unit(request, monkeypatch, _Session_unit, _sqlite_engine_
         "app.workers.tasks.evaluation_tasks",
         "app.workers.tasks.ingest_tasks",
         "app.workers.tasks.http_monitoring_tasks",
-        # ⚠️ services utilisés par les tests unitaires
-        "app.application.services.http_monitor_service",  # ← AJOUT CRUCIAL
+        # services (souvent appelés par les tests unitaires)
+        "app.application.services.http_monitor_service",
     ]
 
     for modname in to_patch:
@@ -303,27 +320,22 @@ def patch_db_stack_for_unit(request, monkeypatch, _Session_unit, _sqlite_engine_
             m = importlib.import_module(modname)
         except ModuleNotFoundError:
             continue
-        # get_sync_session
         monkeypatch.setattr(m, "get_sync_session", _fake_get_sync_session, raising=False)
-        # SessionLocal
         monkeypatch.setattr(m, "SessionLocal", _Session_unit, raising=False)
-        # engine
         monkeypatch.setattr(m, "engine", _sqlite_engine_unit, raising=False)
 
 
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 # UNIT-ONLY: Mock SlackProvider (provider + tasks)
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.fixture
 def mock_slack(request, monkeypatch):
     """
     Mocke l'envoi Slack pour les tests unitaires :
-    - on capture les appels (liste 'calls' retournée par la fixture)
-    - on force un succès pour éviter les retries Celery
-    ⚠️ On patche à la fois le module provider ET notification_tasks (référence importée).
+    - capture les appels (liste 'calls')
+    - force un succès pour éviter les retries Celery
     """
     if not _is_unit(request):
-        # En intégration/E2E, on ne mock pas par défaut.
         return None
 
     calls = []
@@ -340,7 +352,7 @@ def mock_slack(request, monkeypatch):
         calls.append(kw)
         return True
 
-    # 1) Patch du module provider (usage indirect)
+    # 1) Module provider
     try:
         from app.infrastructure.notifications.providers import slack_provider  # type: ignore
         if hasattr(slack_provider, "SlackProvider"):
@@ -350,7 +362,7 @@ def mock_slack(request, monkeypatch):
     except Exception:
         pass
 
-    # 2) Patch du module qui a importé la classe/fonction (référence figée)
+    # 2) Module des tâches (référence importée)
     try:
         import app.workers.tasks.notification_tasks as nt  # type: ignore
         if hasattr(nt, "SlackProvider"):
@@ -363,9 +375,9 @@ def mock_slack(request, monkeypatch):
     return calls
 
 
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 # Payload factories simples (utiles pour tests API)
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.fixture
 def http_target_base_payload():
     return {
@@ -388,9 +400,9 @@ def payload_factory(http_target_base_payload):
     return _factory
 
 
-# ============================================================================
-# Cursor Postgres brut (INTÉGRATION seulement quand on l'utilise)
-# ============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# Cursor Postgres brut (INTÉGRATION seulement si injecté explicitement)
+# ─────────────────────────────────────────────────────────────────────────────
 @pytest.fixture
 def db_cursor():
     """
@@ -398,7 +410,7 @@ def db_cursor():
     - Démarre une transaction avant le test et fait ROLLBACK après.
     - N'est utilisé que si injecté explicitement dans un test d'intégration.
     """
-    import psycopg  # psycopg-binary doit être présent dans requirements-dev.txt
+    import psycopg  # nécessite psycopg[binary] en deps d'intégration
 
     dsn = os.getenv("PG_DSN", "postgresql://postgres:postgres@localhost:5432/app")
     with psycopg.connect(dsn) as conn:

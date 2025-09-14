@@ -1,16 +1,4 @@
 # server/tests/unit/conftest.py
-# ─────────────────────────────────────────────────────────────────────────────
-# Conftest pour les TESTS UNITAIRES.
-#
-# Objectifs :
-# - Poser les ENV *avant* les imports app.* pour que Settings() voie un webhook
-#   et un cooldown court.
-# - Fournir la fixture `mock_slack` qui PATCH la classe SlackProvider là où
-#   elle est réellement utilisée (dans notification_tasks) afin de :
-#       • renvoyer True (pas de retry Celery),
-#       • enregistrer chaque "envoi" dans une liste (compteur de test).
-# ─────────────────────────────────────────────────────────────────────────────
-
 from __future__ import annotations
 
 import os
@@ -19,46 +7,47 @@ import importlib
 import pytest
 
 
-def pytest_configure(config) -> None:
+@pytest.fixture(scope="session", autouse=True)
+def _unit_env_session_defaults():
     """
-    S'exécute avant la collecte → parfait pour poser les ENV lues par Settings().
+    S'applique uniquement au package 'unit' (car ce conftest est dans server/tests/unit/).
+    Pose des ENV sûres AVANT l'import des modules utilisés par ces tests,
+    puis recharge Settings si besoin.
     """
+    os.environ.setdefault("ENV_FILE", "/dev/null")
+    os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
     os.environ.setdefault("STUB_SLACK", "1")
     os.environ.setdefault("SLACK_WEBHOOK", "http://localhost/dummy-204")
     os.environ.setdefault("ALERT_REMINDER_MINUTES", "1")
     os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "1")
 
-    # Si app.core.config a déjà été importé par un autre test, on le recharge
-    # pour ré-instancier Settings() avec ces ENV.
     if "app.core.config" in sys.modules:
         importlib.reload(sys.modules["app.core.config"])
+    try:
+        import app.infrastructure.persistence.database.session as sess  # type: ignore
+        sess._engine = None
+        sess._SessionLocal = None
+    except Exception:
+        pass
 
 
 @pytest.fixture
 def mock_slack(monkeypatch):
     """
-    Patch la classe SlackProvider pour:
-      - enregistrer les appels (dans `events`)
-      - renvoyer True (succès) → pas de retry Celery
-
-    NOTE IMPORTANTE :
-    La tâche importe souvent `SlackProvider` DANS `notification_tasks`.
-    On patch donc *deux* emplacements possibles:
-      1) le module provider source (par prudence)
-      2) le module des tâches (là où la classe est référencée au runtime)
+    Patch SlackProvider (provider + tasks) pour capturer les envois et forcer le succès.
     """
     events: list[dict] = []
 
     class _FakeSlackProvider:
-        def __init__(self, *a, **kw):
+        def __init__(self, *a, **kw):  # noqa: ARG002
             pass
 
         def send(self, **params):
-            # on enregistre ce qui est envoyé pour les assertions
             events.append(params)
-            return True  # succès → pas de retry
+            return True
 
-    # 1) Patch côté provider (au cas où d'autres chemins l'utilisent)
+    # Provider
     try:
         prov_mod = importlib.import_module(
             "app.infrastructure.notifications.providers.slack_provider"
@@ -68,15 +57,12 @@ def mock_slack(monkeypatch):
     except Exception:
         pass
 
-    # 2) Patch côté module des tâches (référence réellement utilisée)
+    # Tasks
     try:
         tasks_mod = importlib.import_module("app.workers.tasks.notification_tasks")
         if hasattr(tasks_mod, "SlackProvider"):
             monkeypatch.setattr(tasks_mod, "SlackProvider", _FakeSlackProvider, raising=True)
     except Exception:
-        # Si le module n'est pas encore importé, il sera importé après et
-        # utilisera notre ENV (SLACK_WEBHOOK) ; le test appelle .run() qui
-        # passera par la classe patchée ci-dessus si déjà importée.
         pass
 
     return events
