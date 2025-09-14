@@ -223,13 +223,34 @@ jobs:
           rm -f .coverage || true
           chmod 644 "$TGT"
           ls -la "$TGT"
-        
+            
       - name: Verify coverage file exists before upload
         run: |
-          echo "Listing .coverage.unit.${{ matrix.shard }} in workspace root:"
-          ls -l .coverage.unit.${{ matrix.shard }} || echo "❌ Not found"
-          echo "Workspace tree:"
-          find . -maxdepth 1 -type f -ls
+          echo "=== PRE-UPLOAD VERIFICATION ==="
+          echo "Checking for .coverage.unit.${{ matrix.shard }}"
+          ls -l ".coverage.unit.${{ matrix.shard }}" || echo "❌ Not found in current dir"
+          echo "Current dir: $(pwd)"
+          echo "Workspace: ${{ github.workspace }}"
+          find "${{ github.workspace }}" -name ".coverage.unit.${{ matrix.shard }}" -ls || echo "❌ Not found in workspace" 
+
+      - name: Debug workspace avant upload
+        run: |
+          echo "=== DEBUG AVANT UPLOAD ==="
+          echo "Current directory: $(pwd)"
+          echo "GitHub workspace: ${{ github.workspace }}"
+          echo "Matrix shard: ${{ matrix.shard }}"
+          echo ""
+          echo "Listing all coverage files:"
+          find . -name ".coverage*" -ls 2>/dev/null || echo "No coverage files found in current dir"
+          echo ""
+          echo "Listing from GitHub workspace root:"
+          find "${{ github.workspace }}" -name ".coverage.unit.${{ matrix.shard }}" -ls 2>/dev/null || echo "Not found in workspace root"
+          echo ""
+          echo "File existence check:"
+          ls -la ".coverage.unit.${{ matrix.shard }}" 2>/dev/null || echo "File does not exist in current dir"
+          echo ""
+          echo "Environment variables:"
+          env | grep -E "(WORKFLOW|WORKSPACE|GITHUB)" | head -10
 
       - name: Upload raw coverage (shard ${{ matrix.shard }})
         if: always()
@@ -239,6 +260,20 @@ jobs:
           path: .coverage.unit.${{ matrix.shard }}
           retention-days: 1
           if-no-files-found: error
+        
+      - name: Debug après échec upload
+        if: failure()
+        run: |
+          echo "=== DEBUG APRÈS ÉCHEC UPLOAD ==="
+          echo "Vérification finale de l'existence du fichier:"
+          find . -name ".coverage.unit.${{ matrix.shard }}" -exec ls -la {} \; 2>/dev/null || echo "Fichier introuvable"
+          echo ""
+          echo "Arborescence complète du workspace:"
+          pwd
+          ls -la
+          echo ""
+          echo "Processus en cours:"
+          ps auxf
         
   # ---------------------------------------------------------------------------
   # 1.bis) AGGREGATE — combine la couverture des 4 shards unit en un report
