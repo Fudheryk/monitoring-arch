@@ -309,7 +309,6 @@ La CI :
 - démarre la stack via `docker compose --env-file ../.env.docker up -d --build`
 - attend la DB, applique les migrations Alembic dans le conteneur `api`
 - exécute : unit (host-only) → integration (cov-all) → e2e
-- envoie la couverture vers Codecov (3 rapports séparés)
 
 🛈 Le script `scripts/smoke_http_targets.sh` est optionnel et non exécuté par défaut en CI (peut être ajouté après les E2E si besoin).
 
