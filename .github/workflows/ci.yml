@@ -106,17 +106,32 @@ jobs:
         run: |
           set -euxo pipefail
           TGT=".coverage.unit.${{ matrix.shard }}"
+          echo "Looking for coverage file for shard ${{ matrix.shard }}"
+          echo "Current directory contents:"
+          ls -la || true
+          echo "Looking for any .coverage* files:"
+          ls -la .coverage* || echo "No .coverage* files found"
+          
           if [[ -f "$TGT" ]]; then
             echo "Found $TGT"
+            ls -la "$TGT"
           elif [[ -f ".coverage" ]]; then
             mv .coverage "$TGT"
             echo "Moved .coverage -> $TGT"
+            ls -la "$TGT"
           else
             echo "WARNING: no coverage data file produced for this shard"
+            echo "This could indicate:"
+            echo "1. No tests were run (empty shard)"
+            echo "2. pytest/coverage failed"
+            echo "3. Tests ran but no code was covered"
             # Créer un fichier vide pour éviter les erreurs d'upload
             : > "$TGT"
+            echo "Created empty placeholder: $TGT"
           fi
-          ls -la .coverage*
+          
+          echo "Final coverage files:"
+          ls -la .coverage* || true
 
       # CORRECTION: Chaque shard upload son propre artifact avec un nom unique
       - name: Upload raw coverage (shard ${{ matrix.shard }})
