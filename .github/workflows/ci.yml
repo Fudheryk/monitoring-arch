@@ -252,12 +252,17 @@ jobs:
           echo "Environment variables:"
           env | grep -E "(WORKFLOW|WORKSPACE|GITHUB)" | head -10
 
+      - name: Prepare for upload
+        run: |
+          mkdir -p artifacts
+          cp .coverage.unit.${{ matrix.shard }} artifacts/
+
       - name: Upload raw coverage (shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-shard-${{ matrix.shard }}
-          path: .coverage.unit.${{ matrix.shard }}
+          path: ${{ github.workspace }}/.coverage.unit.${{ matrix.shard }}
           retention-days: 1
           if-no-files-found: error
         
