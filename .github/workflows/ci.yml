@@ -257,12 +257,18 @@ jobs:
           mkdir -p artifacts
           cp .coverage.unit.${{ matrix.shard }} artifacts/
 
+      - name: Verify copied file before upload
+        run: |
+          echo "=== VERIFIY COPIED FILE ==="
+          ls -la artifacts/
+          ls -la artifacts/.coverage.unit.${{ matrix.shard }} || echo "❌ Not found in artifacts dir"
+
       - name: Upload raw coverage (shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-shard-${{ matrix.shard }}
-          path: ${{ github.workspace }}/.coverage.unit.${{ matrix.shard }}
+          path: artifacts/.coverage.unit.${{ matrix.shard }}
           retention-days: 1
           if-no-files-found: error
         
