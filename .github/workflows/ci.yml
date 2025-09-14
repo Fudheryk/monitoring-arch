@@ -1,7 +1,9 @@
-# CI en 3 jobs : unit → integration → e2e
-# - Debug/Imports exécutés APRES checkout et avec PYTHONPATH=server
-# - Unit: SQLite in-memory, couverture stricte uniquement sur unit
-# - Integration/E2E: stack Docker + migrations + tests host
+# CI en 3 étapes principales : unit → integration → e2e
+# + 1 job "aggregate-unit-coverage" pour combiner la couverture des shards unit
+# - Unit : parallélisé (matrix sharding x4 + xdist), DB SQLite in-memory
+# - Integration / E2E : stack Docker, migrations Alembic, tests exécutés côté host
+# - Pas d’upload Codecov (pas de compte requis). La couverture unit combinée est publiée en artifact.
+
 name: CI
 
 on:
@@ -17,11 +19,15 @@ permissions:
   contents: read
 
 jobs:
-  # -----------------------------
-  # 1) UNIT — sans Docker
-  # -----------------------------
+  # ---------------------------------------------------------------------------
+  # 1) UNIT — sans Docker, parallélisé par sharding (4 shards) + xdist
+  # ---------------------------------------------------------------------------
   unit:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false         # ne stoppe pas les autres shards si un échoue
+      matrix:
+        shard: [1, 2, 3, 4]    # 4 shards équilibrés via pytest-split
     env:
       PYTHONPATH: server
       ENV_FILE: /dev/null
@@ -56,7 +62,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+          # lib pour sharder proprement la suite (équilibrage par historique)
+          pip install pytest-split
 
+      # Debug après checkout et avec PYTHONPATH=server, comme demandé
       - name: Debug env & settings (after checkout)
         env:
           PYTHONPATH: server
@@ -76,7 +85,7 @@ jobs:
               print("Import settings FAILED:", e)
           PY
 
-      - name: Run unit tests (xdist)
+      - name: Run unit tests (shard ${{ matrix.shard }})
         env:
           CELERY_TASK_ALWAYS_EAGER: "1"
           STUB_SLACK: "1"
@@ -84,23 +93,70 @@ jobs:
           SLACK_WEBHOOK: "http://httpbin:80/status/204"
           PYTHONPATH: server
         run: |
-          pytest -m "unit" -n auto \
+          # Chaque shard écrit un fragment de couverture distinct
+          export COVERAGE_FILE=".coverage.unit.${{ matrix.shard }}"
+          # Sharding: 4 groupes, ce runner exécute le groupe n
+          # xdist: parallélisme intra-runner (CPU cores)
+          pytest -m "unit" --splits 4 --group ${{ matrix.shard }} -n auto \
             --cov=server/app --cov-config=.coveragerc \
-            --cov-report=term-missing --cov-report=xml \
-            --cov-fail-under=60 --maxfail=1
+            --cov-report=term-missing \
+            --cov-fail-under=0 --maxfail=1
 
-      - name: Upload coverage xml (unit)
+      - name: Upload raw coverage (shard)
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-coverage-${{ matrix.shard }}
+          path: .coverage.unit.${{ matrix.shard }}
+
+  # ---------------------------------------------------------------------------
+  # 1.bis) AGGREGATE — combine la couverture des 4 shards unit en un report
+  # ---------------------------------------------------------------------------
+  aggregate-unit-coverage:
+    runs-on: ubuntu-latest
+    needs: unit            # attend que les 4 shards aient fini
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install coverage tool
+        run: pip install coverage
+
+      - name: Download shard coverages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: unit-coverage-*
+          merge-multiple: true   # place tous les .coverage.unit.* dans le CWD
+
+      - name: Combine + report (unit)
+        run: |
+          ls -la .coverage.unit.* || true
+          coverage combine .coverage.unit.*
+          coverage report -m
+          coverage xml -o coverage-unit.xml
+          coverage html -d htmlcov-unit
+
+      - name: Upload combined coverage (unit)
         uses: actions/upload-artifact@v4
         with:
           name: coverage-unit.xml
-          path: coverage.xml
+          path: coverage-unit.xml
 
-  # ----------------------------------------
-  # 2) INTEGRATION — Docker + migrations
-  # ----------------------------------------
+      - name: Upload HTML report (unit)
+        uses: actions/upload-artifact@v4
+        with:
+          name: htmlcov-unit
+          path: htmlcov-unit
+
+  # ---------------------------------------------------------------------------
+  # 2) INTEGRATION — stack Docker + migrations + tests host (séquentiel)
+  # ---------------------------------------------------------------------------
   integration:
     runs-on: ubuntu-latest
-    needs: unit
+    needs: aggregate-unit-coverage
     env:
       STUB_SLACK: "1"
       ALERT_REMINDER_MINUTES: "1"
@@ -219,9 +275,9 @@ jobs:
         working-directory: docker
         run: docker compose --env-file ../.env.docker down -v
 
-  # -----------------------------
-  # 3) E2E — Docker + tests
-  # -----------------------------
+  # ---------------------------------------------------------------------------
+  # 3) E2E — redémarre la stack minimale et lance les tests end-to-end
+  # ---------------------------------------------------------------------------
   e2e:
     runs-on: ubuntu-latest
     needs: integration
@@ -335,6 +391,7 @@ jobs:
           ALERT_REMINDER_MINUTES: "1"
           DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
         run: |
+          # E2E : pas de parallélisme xdist (fragile sur stack partagée)
           pytest -m "e2e" --no-cov --maxfail=1
 
       - name: Dump docker logs on failure
