@@ -255,20 +255,14 @@ jobs:
       - name: Prepare for upload
         run: |
           mkdir -p artifacts
-          cp .coverage.unit.${{ matrix.shard }} artifacts/
-
-      - name: Verify copied file before upload
-        run: |
-          echo "=== VERIFIY COPIED FILE ==="
-          ls -la artifacts/
-          ls -la artifacts/.coverage.unit.${{ matrix.shard }} || echo "❌ Not found in artifacts dir"
-
+          cp .coverage.unit.${{ matrix.shard }} artifacts/coverage_unit_${{ matrix.shard }}
+          
       - name: Upload raw coverage (shard ${{ matrix.shard }})
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-shard-${{ matrix.shard }}
-          path: artifacts/.coverage.unit.${{ matrix.shard }}
+          path: artifacts/coverage_unit_${{ matrix.shard }}
           retention-days: 1
           if-no-files-found: error
         
@@ -277,7 +271,7 @@ jobs:
         run: |
           echo "=== DEBUG APRÈS ÉCHEC UPLOAD ==="
           echo "Vérification finale de l'existence du fichier:"
-          find . -name ".coverage.unit.${{ matrix.shard }}" -exec ls -la {} \; 2>/dev/null || echo "Fichier introuvable"
+          find . -name "coverage_unit_${{ matrix.shard }}" -exec ls -la {} \; 2>/dev/null || echo "Fichier introuvable"
           echo ""
           echo "Arborescence complète du workspace:"
           pwd
