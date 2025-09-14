@@ -1,0 +1,42 @@
+# .coveragerc
+[run]
+source = app
+branch = True
+parallel = True
+concurrency = multiprocessing
+omit =
+    */__init__.py
+    server/app/main.py
+    server/app/api/v1/router.py
+    server/app/api/v1/endpoints/health.py
+    server/app/api/v1/endpoints/__init__.py
+    server/app/api/__init__.py
+    server/app/api/deps.py
+    server/app/api/schemas/*
+    server/app/migrations/*
+    server/app/migrations/versions/*
+    server/app/workers/scheduler/*
+    server/app/infrastructure/persistence/database/base.py
+
+[report]
+show_missing = True
+skip_covered = True
+fail_under = 70
+omit =
+    server/app/main.py
+    server/app/api/v1/router.py
+    server/app/api/v1/endpoints/health.py
+    server/app/api/v1/endpoints/__init__.py
+    server/app/api/__init__.py
+    server/app/api/deps.py
+    server/app/api/schemas/*
+    server/app/migrations/*
+    server/app/migrations/versions/*
+    server/app/workers/scheduler/*
+    server/app/infrastructure/persistence/database/base.py
+
+[paths]
+source =
+    server/app
+    /app/server/app
+    */monitoring-arch/server/app

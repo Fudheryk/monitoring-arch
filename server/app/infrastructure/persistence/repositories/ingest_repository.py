@@ -9,12 +9,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.persistence.database.models.ingest_event import IngestEvent
 import uuid
 
-import uuid
-from sqlalchemy import insert
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
-from app.infrastructure.persistence.database.models.ingest_event import IngestEvent
 
 class IngestRepository:
     def __init__(self, session: Session):

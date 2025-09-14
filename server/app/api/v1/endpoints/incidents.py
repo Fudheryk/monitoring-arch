@@ -7,22 +7,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from app.core.security import api_key_auth
-from app.infrastructure.persistence.database.session import get_session
-from app.infrastructure.persistence.database.models.incident import Incident
-
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
-from app.core.security import api_key_auth
-from app.infrastructure.persistence.database.session import get_session
+from app.infrastructure.persistence.database.session import get_db
 from app.infrastructure.persistence.database.models.incident import Incident
 
 router = APIRouter(prefix="/incidents")
 
 @router.get("")
-async def list_incidents(api_key=Depends(api_key_auth), session: Session = Depends(get_session)) -> list[dict]:
-    rows = session.scalars(select(Incident).where(Incident.client_id == api_key.client_id).order_by(Incident.created_at.desc()).limit(100)).all()
+async def list_incidents(api_key=Depends(api_key_auth), db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.scalars(select(Incident).where(Incident.client_id == api_key.client_id).order_by(Incident.created_at.desc()).limit(100)).all()
     return [{
         "id": str(i.id),
         "title": i.title,

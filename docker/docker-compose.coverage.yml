@@ -1,0 +1,6 @@
+services:
+  worker:
+    environment:
+      COVERAGE_PROCESS_START: /app/.coveragerc
+      COVERAGE_FILE: /app/server/.coverage.worker
+      WORKER_COVERAGE: "1"

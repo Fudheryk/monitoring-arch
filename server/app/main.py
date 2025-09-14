@@ -11,15 +11,8 @@ from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.middleware import install_global_middleware
 
-from typing import List
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1.router import api_router
-from app.core.config import settings
-from app.core.logging import setup_logging
-from app.core.middleware import install_global_middleware
 
 app = FastAPI(title="Monitoring Server", version="0.2.1")
 

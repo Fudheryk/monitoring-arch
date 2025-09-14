@@ -10,14 +10,8 @@ from app.infrastructure.persistence.database.base import Base
 import uuid
 import datetime as dt
 
-import uuid
-import datetime as dt
 
-from sqlalchemy import DateTime, String
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.persistence.database.base import Base
 
 class Client(Base):
     __tablename__ = "clients"

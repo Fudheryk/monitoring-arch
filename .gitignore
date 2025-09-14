@@ -6,15 +6,24 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+**/*.egg-info/
 
-# Tests
+# Tests / coverage artefacts
 .pytest_cache/
+.coverage
+.coverage.*
+server/.coverage*
+docker/.coverage
+coverage.xml
+htmlcov/
+server/.coveragerc
 
 # Outils d'analyse statique
 .mypy_cache/
 .dmypy.json
 .pyre/
 .pytype/
+.ruff_cache
 
 # Build / distribution
 dist/
@@ -23,10 +32,23 @@ build/
 # Fichiers sensibles (ne jamais pousser)
 .env
 .env.*
+!.env.example
+.env.integration.local
 
 # IDE / OS
 .vscode/
 .idea/
 .DS_Store
+.python-version
+.tox/
 
+# Docker
+docker/docker-compose.override.yml
+docker/.env.docker
+
+# Celery
 server/celerybeat-schedule
+
+# local venv
+.venv-ci/
+.venv-ci/
