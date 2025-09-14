@@ -51,3 +51,4 @@ server/celerybeat-schedule
 
 # local venv
 .venv-ci/
+.venv-ci/
