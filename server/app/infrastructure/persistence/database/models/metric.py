@@ -9,13 +9,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.infrastructure.persistence.database.base import Base
 import uuid
 
-import uuid
 
-from sqlalchemy import Boolean, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.persistence.database.base import Base
 
 class Metric(Base):
     __tablename__ = "metrics"

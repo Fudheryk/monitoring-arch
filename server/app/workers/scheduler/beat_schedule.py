@@ -17,4 +17,8 @@ beat_schedule = {
         "task": "tasks.http",
         "schedule": 300.0,
     },
+    "evaluate-all": {
+        "task": "tasks.evaluate", 
+        "schedule": 10.0
+    },
 }

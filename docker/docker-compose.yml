@@ -1,12 +1,35 @@
+# docker/docker-compose.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Compose pour la stack d’intégration/dev.
+# Points clés :
+# - On lit désormais les variables via **../.env.docker** (et plus .env).
+# - Les services API/worker utilisent **db:5432** (réseau interne Docker).
+# - On expose 5432 vers l’hôte pour les tests d’intégration lancés en dehors
+#   des conteneurs (désactivez si non nécessaire).
+# - Les volumes de code sont montés pour le hot-reload / coverage en dev.
+#   En prod, ne montez PAS ces volumes (image immuable recommandée).
+# ─────────────────────────────────────────────────────────────────────────────
+
 x-app-common: &app-common
   build:
-    context: ..
-    dockerfile: ./server/Dockerfile
-  env_file: ../.env
+    context: ..                      # Contexte racine du projet
+    dockerfile: ./server/Dockerfile  # Dockerfile de l'app
+  env_file: ../.env.docker           # Fichier d'env dédié à Docker (renommé)
   working_dir: /app/server
+  environment:
+    # Couche coverage activable à la demande (Makefile/CI)
+    # - API_COVERAGE / WORKER_COVERAGE pilotent l’entrypoint pour lancer via "coverage run"
+    # - COVERAGE_PROCESS_START pointe vers .coveragerc (auto-configuration)
+    # - COVERAGE_FILE indique où écrire le .coverage dans le conteneur
+    API_COVERAGE: "${API_COVERAGE:-}"
+    WORKER_COVERAGE: "${WORKER_COVERAGE:-}"
+    COVERAGE_PROCESS_START: "/app/.coveragerc"
+    COVERAGE_FILE: "${COVERAGE_FILE:-}"
+  # Volumes → utiles seulement en dev pour hot reload / couverture
+  # A ne pas monter en prod (image immuable recommandée)
   volumes:
-    # Pratique en dev (hot reload). En prod, supprime ce montage.
-    - ../server:/app/server
+    - ../server:/app/server:cached    # Code de l’app
+    - ../.coveragerc:/app/.coveragerc:ro # Config coverage, lecture seule
   depends_on:
     db:
       condition: service_healthy
@@ -17,23 +40,45 @@ x-app-common: &app-common
 services:
   api:
     <<: *app-common
-    # Fait appel à /entrypoint.sh "api" -> alembic upgrade + uvicorn
-    command: ["api"]
-    ports: ["8000:8000"]
+    command: ["api"]                 # Voir /entrypoint.sh
+    environment:
+      # Ces variables complètent/écrasent celles de env_file si nécessaire
+      API_COVERAGE: "${API_COVERAGE:-0}"
+      COVERAGE_RCFILE: "/app/.coveragerc"
+      # Forçage défensif : on parle au service "db" du réseau Docker
+      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      STUB_SLACK: "1"
+      ALERT_REMINDER_MINUTES: "1"
+      PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+    ports:
+      - "8000:8000"
+    stop_signal: SIGINT
+    stop_grace_period: 20s
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/api/v1/health').getcode()==200 else sys.exit(1)"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
       interval: 10s
-      timeout: 3s
+      timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   worker:
     <<: *app-common
-    # Passé tel-quel à /entrypoint.sh -> exec "$@"
     command: >
       celery -A app.workers.celery_app.celery worker
       --hostname=worker@%h
       -Q ingest,evaluate,heartbeat,http,notify
       -O fair -l info
+    # On garde un override explicite pour éviter tout fallback hôte
+    environment:
+      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      COVERAGE_PROCESS_START: /app/.coveragerc
+      COVERAGE_FILE: /app/server/.coverage.worker
+      WORKER_COVERAGE: "1"  # optionnel, utile juste comme “drapeau”
+      PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
     stop_grace_period: 30s
 
   beat:
@@ -52,10 +97,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    ports: ["5432:5432"]   # retire cette ligne si l'accès direct depuis l'hôte n'est pas nécessaire
+    ports:
+      - "5432:5432"   # Exposer pour les tests d’intégration côté hôte
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   redis:
     image: redis:7
@@ -65,7 +115,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    ports: ["6379:6379"]   # retire cette ligne si l'accès direct depuis l'hôte n'est pas nécessaire
+    ports:
+      - "6379:6379"   # Retirez si l’accès direct depuis l’hôte est inutile
     restart: unless-stopped
 
 volumes:

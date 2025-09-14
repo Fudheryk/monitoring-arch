@@ -9,13 +9,8 @@ from sqlalchemy.orm import Session
 from app.infrastructure.persistence.database.models.metric import Metric
 from app.infrastructure.persistence.database.models.sample import Sample
 
-from datetime import datetime, timezone
 
-from sqlalchemy import insert
-from sqlalchemy.orm import Session
 
-from app.infrastructure.persistence.database.models.metric import Metric
-from app.infrastructure.persistence.database.models.sample import Sample
 
 class SampleRepository:
     def __init__(self, session: Session):

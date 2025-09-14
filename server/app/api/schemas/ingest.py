@@ -6,8 +6,6 @@ Schémas ingestion.
 from typing import Any, Literal
 from pydantic import BaseModel, Field
 
-from typing import Any, Literal
-from pydantic import BaseModel, Field
 
 MetricType = Literal["bool", "numeric", "string"]
 

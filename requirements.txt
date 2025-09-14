@@ -1,0 +1,9 @@
+SQLAlchemy>=1.4
+psycopg-binary>=2.9
+fastapi
+uvicorn
+celery
+redis
+alembic>=1.11.1
+email-validator>=2.1.0.post1
+httpx

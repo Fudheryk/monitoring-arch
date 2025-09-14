@@ -6,8 +6,6 @@ Heartbeat no-data.
 from app.workers.celery_app import celery
 from app.application.services.heartbeat_service import check_offline
 
-from app.workers.celery_app import celery
-from app.application.services.heartbeat_service import check_offline
 
 @celery.task(name="tasks.heartbeat")
 def heartbeat_check() -> int:
