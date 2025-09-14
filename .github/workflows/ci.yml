@@ -113,15 +113,15 @@ jobs:
             echo "Moved .coverage -> $TGT"
           else
             echo "WARNING: no coverage data file produced for this shard"
-            # create an empty file so the artifact exists (combine will skip empties)
-            : > "$TGT"
+            : > "$TGT"   # placeholder (0 octet) pour que l'artifact existe
           fi
           ls -la .coverage*
 
       - name: Upload raw coverage (shard)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: unit-coverage-${{ matrix.shard }}
+          name: unit-coverage
           path: .coverage.unit.${{ matrix.shard }}
 
   # ---------------------------------------------------------------------------
@@ -144,30 +144,24 @@ jobs:
       - name: Download shard coverages
         uses: actions/download-artifact@v4
         with:
-          pattern: unit-coverage-*
-          merge-multiple: true   # place tous les .coverage.unit.* dans le CWD
+          name: unit-coverage
+          path: unit_coverage
 
       - name: Combine + report (unit)
         run: |
           set -euo pipefail
-          ls -la .coverage.unit.* || true
-          shopt -s nullglob
-          files=( .coverage.unit.* )
+          echo "Downloaded files:"
+          find unit_coverage -maxdepth 2 -type f -print || true
+
+          # Récupère tous les fichiers .coverage* non vides
+          mapfile -t files < <(find unit_coverage -type f -name '.coverage*' -size +0c)
           if [[ ${#files[@]} -eq 0 ]]; then
-            echo "ERROR: No unit coverage files downloaded. Check shard jobs."
+            echo "ERROR: No non-empty unit coverage files downloaded. Check shard jobs."
             exit 1
           fi
-          # Drop truly empty files (if any shard created a placeholder)
-          nonempty=()
-          for f in "${files[@]}"; do
-            if [[ -s "$f" ]]; then nonempty+=( "$f" ); fi
-          done
-          if [[ ${#nonempty[@]} -eq 0 ]]; then
-            echo "ERROR: All coverage files are empty."
-            exit 1
-          fi
-          echo "Combining: ${nonempty[*]}"
-          coverage combine "${nonempty[@]}"
+          echo "Combining: ${files[*]}"
+          python -m pip install coverage >/dev/null
+          coverage combine "${files[@]}"
           coverage report -m
           coverage xml -o coverage-unit.xml
           coverage html -d htmlcov-unit
