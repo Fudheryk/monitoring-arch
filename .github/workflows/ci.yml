@@ -1,12 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# CI optimisée : unit shardé → (integration ∥ e2e) → aggregate → gate + reports
+# CI optimisée : unit shardé → (integration ∥ e2e) → aggregate GLOBALE → gate + reports
 # 
-# AMÉLIORATIONS:
-# - Timeout explicites pour éviter les jobs qui traînent
-# - Gestion d'erreur renforcée sur la coverage
-# - Upload conditionnel des rapports HTML
-# - Cache Docker plus agressif
-# - Retry sur les étapes critiques (DB, API)
+# CORRECTIONS:
+# - Fichiers coverage sans point initial pour éviter les problèmes d'upload
+# - Agrégation globale de TOUS les types de tests (unit + integration + e2e)
+# - Noms d'artifacts plus clairs
+# - Gestion robuste des fichiers de coverage
 # ──────────────────────────────────────────────────────────────────────────────
 
 name: CI
@@ -26,11 +25,11 @@ permissions:
 jobs:
 
   # ────────────────────────────────────────────────────────────────────────────
-  # 1) UNIT — sharding x4 + xdist + coverage par shard
+  # 1) UNIT — sharding x4 + xdist + coverage par shard (fichiers sans point initial)
   # ────────────────────────────────────────────────────────────────────────────
   unit:
     runs-on: ubuntu-latest
-    timeout-minutes: 15  # Timeout explicite
+    timeout-minutes: 15
 
     services:
       redis:
@@ -66,7 +65,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Cache pip plus agressif
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
@@ -95,7 +93,8 @@ jobs:
       - name: Run unit tests (shard ${{ matrix.shard }})
         env:
           CELERY_TASK_ALWAYS_EAGER: "1"
-          COVERAGE_FILE: ".coverage.unit.${{ matrix.shard }}"
+          # IMPORTANT: Nom sans point initial pour éviter les problèmes d'upload
+          COVERAGE_FILE: "coverage-unit-shard-${{ matrix.shard }}.data"
         run: |
           set -euo pipefail
           
@@ -136,14 +135,14 @@ jobs:
             fi
           fi
 
-          # Vérification du fichier de coverage
+          # Vérification et renommage si nécessaire
           if [[ -f .coverage && ! -f "$COVERAGE_FILE" ]]; then 
             mv .coverage "$COVERAGE_FILE"
           fi
           
           if [[ ! -f "$COVERAGE_FILE" ]]; then
             echo "❌ Coverage file $COVERAGE_FILE not found"
-            ls -la .coverage* || true
+            ls -la coverage* .coverage* || true
             exit 1
           fi
           
@@ -153,13 +152,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-shard-${{ matrix.shard }}
-          path: .coverage.unit.${{ matrix.shard }}
+          name: unit-coverage-shard-${{ matrix.shard }}
+          path: coverage-unit-shard-${{ matrix.shard }}.data
           retention-days: 1
           if-no-files-found: error
 
   # ────────────────────────────────────────────────────────────────────────────
-  # 2) INTEGRATION — Docker + coverage + retry sur échecs critiques
+  # 2) INTEGRATION — Docker + coverage avec nom de fichier sans point
   # ────────────────────────────────────────────────────────────────────────────
   integration:
     runs-on: ubuntu-latest
@@ -178,7 +177,6 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Cache Docker plus agressif
       - name: Cache Docker layers
         uses: actions/cache@v4
         with:
@@ -220,18 +218,14 @@ jobs:
         env:
           API_COVERAGE: "1"
           WORKER_COVERAGE: "1"
-          COVERAGE_FILE: "/app/server/.coverage.api"
+          # Fichier dans le conteneur avec nom standard
+          COVERAGE_FILE: "/app/server/coverage-api-container.data"
           DOCKER_BUILDKIT: 1
           BUILDKIT_INLINE_CACHE: 1
         run: |
-          # Build avec cache
-          docker compose --env-file ../.env.docker build \
-            --build-arg BUILDKIT_INLINE_CACHE=1 api
-          
-          # Start services
+          docker compose --env-file ../.env.docker build --build-arg BUILDKIT_INLINE_CACHE=1 api
           docker compose --env-file ../.env.docker up -d db redis api worker
 
-      # Retry sur DB ready
       - name: Wait for database
         working-directory: docker
         run: |
@@ -256,7 +250,6 @@ jobs:
           docker compose --env-file ../.env.docker run --rm -w /app/server api \
             alembic -c /app/server/alembic.ini upgrade head
 
-      # Retry sur API health
       - name: Wait for API health
         run: |
           echo "Waiting for API to be healthy..."
@@ -278,59 +271,72 @@ jobs:
         env:
           PYTHONPATH: server
           DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=10'
-          COVERAGE_FILE: ".coverage.integ.host"
+          # Nom sans point initial
+          COVERAGE_FILE: "coverage-integration-host.data"
         run: |
           pytest -m "integration" -v --tb=short \
             --cov=server/app --cov-config=.coveragerc --cov-branch \
             --cov-report=term-missing:skip-covered --cov-fail-under=0
 
-      - name: Stop coverage services
+      - name: Stop coverage services and collect files
         working-directory: docker
         run: |
           echo "Stopping services to flush coverage..."
           docker compose --env-file ../.env.docker stop api worker || true
-          sleep 2  # Laisser le temps au flush
+          sleep 2
+          
+          echo "Copying coverage files from containers..."
+          # Copie du fichier API si il existe
+          docker compose --env-file ../.env.docker cp api:/app/server/coverage-api-container.data ../coverage-integration-api.data || {
+            echo "⚠️  No API coverage file found in container"
+          }
+          
+          # Copie du fichier worker si il existe
+          docker compose --env-file ../.env.docker cp worker:/app/server/coverage-worker-container.data ../coverage-integration-worker.data || {
+            echo "⚠️  No worker coverage file found in container"
+          }
 
-      - name: Combine coverage files
+      - name: Combine integration coverage
         run: |
           set -euo pipefail
           
-          echo "=== Available coverage files ==="
-          find . -maxdepth 2 -name ".coverage*" -type f -exec ls -lh {} \;
+          echo "=== Available integration coverage files ==="
+          find . -maxdepth 1 -name "coverage-integration*" -type f -exec ls -lh {} \; || true
           
-          # Collecte des fichiers non vides
+          # Collecte de tous les fichiers integration non vides
           files=()
-          
-          if [[ -f ".coverage.integ.host" ]] && [[ -s ".coverage.integ.host" ]]; then
-            files+=(".coverage.integ.host")
-          fi
-          
-          # Fichiers des conteneurs
-          while IFS= read -r -d '' file; do
-            if [[ -s "$file" ]]; then
-              files+=("$file")
+          for pattern in "coverage-integration-host.data" "coverage-integration-api.data" "coverage-integration-worker.data"; do
+            if [[ -f "$pattern" && -s "$pattern" ]]; then
+              files+=("$pattern")
             fi
-          done < <(find server -maxdepth 1 -name ".coverage*" ! -name ".coveragerc" -type f -print0 2>/dev/null || true)
+          done
           
           if [[ ${#files[@]} -eq 0 ]]; then
-            echo "❌ No coverage files to combine"
+            echo "❌ No integration coverage files to combine"
             exit 1
           fi
           
-          echo "=== Combining ${#files[@]} files ==="
+          echo "=== Combining ${#files[@]} integration files ==="
           printf '%s\n' "${files[@]}"
           
-          COVERAGE_FILE=.coverage coverage combine "${files[@]}"
-          COVERAGE_FILE=.coverage coverage xml -o coverage-integration.xml
-          COVERAGE_FILE=.coverage coverage html -d htmlcov-integration
-          COVERAGE_FILE=.coverage coverage report --skip-covered
+          # Combine avec nom de sortie standard
+          COVERAGE_FILE=coverage-integration-combined.data coverage combine "${files[@]}"
+          COVERAGE_FILE=coverage-integration-combined.data coverage xml -o coverage-integration.xml
+          COVERAGE_FILE=coverage-integration-combined.data coverage html -d htmlcov-integration
+          COVERAGE_FILE=coverage-integration-combined.data coverage report --skip-covered
           
           echo "✅ Integration coverage: $(ls -lh coverage-integration.xml)"
 
-      - name: Upload coverage XML
+      - name: Upload integration coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-integration-xml
+          name: integration-coverage-data
+          path: coverage-integration-combined.data
+
+      - name: Upload integration coverage XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-coverage-xml
           path: coverage-integration.xml
 
       - name: Upload HTML report
@@ -347,7 +353,7 @@ jobs:
         run: docker compose --env-file ../.env.docker down -v --remove-orphans
 
   # ────────────────────────────────────────────────────────────────────────────
-  # 3) E2E — similaire à integration mais sans worker + smoke tests
+  # 3) E2E — même logique avec noms de fichiers corrects
   # ────────────────────────────────────────────────────────────────────────────
   e2e:
     runs-on: ubuntu-latest
@@ -400,7 +406,7 @@ jobs:
         working-directory: docker
         env:
           API_COVERAGE: "1"
-          COVERAGE_FILE: "/app/server/.coverage.api"
+          COVERAGE_FILE: "/app/server/coverage-e2e-api.data"
           DOCKER_BUILDKIT: 1
           BUILDKIT_INLINE_CACHE: 1
         run: |
@@ -444,41 +450,53 @@ jobs:
         env:
           PYTHONPATH: server
           DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=10'
-          COVERAGE_FILE: ".coverage.e2e.host"
+          COVERAGE_FILE: "coverage-e2e-host.data"
         run: |
           pytest -m "e2e" -v --tb=short \
             --cov=server/app --cov-config=.coveragerc --cov-branch \
             --cov-report=term-missing:skip-covered --cov-fail-under=0
 
-      - name: Stop API for coverage flush
+      - name: Stop API and collect coverage
         working-directory: docker
         run: |
           docker compose --env-file ../.env.docker stop api || true
           sleep 2
+          
+          # Copie du fichier API E2E
+          docker compose --env-file ../.env.docker cp api:/app/server/coverage-e2e-api.data ../coverage-e2e-api-container.data || {
+            echo "⚠️  No E2E API coverage file found"
+          }
 
-      - name: Combine coverage
+      - name: Combine E2E coverage
         run: |
           set -euo pipefail
           
+          # Collecte des fichiers E2E
           files=()
-          [[ -f ".coverage.e2e.host" && -s ".coverage.e2e.host" ]] && files+=(".coverage.e2e.host")
+          for pattern in "coverage-e2e-host.data" "coverage-e2e-api-container.data"; do
+            if [[ -f "$pattern" && -s "$pattern" ]]; then
+              files+=("$pattern")
+            fi
+          done
           
-          while IFS= read -r -d '' file; do
-            [[ -s "$file" ]] && files+=("$file")
-          done < <(find server -maxdepth 1 -name ".coverage*" ! -name ".coveragerc" -type f -print0 2>/dev/null || true)
+          [[ ${#files[@]} -eq 0 ]] && { echo "❌ No E2E coverage files"; exit 1; }
           
-          [[ ${#files[@]} -eq 0 ]] && { echo "❌ No coverage files"; exit 1; }
-          
-          echo "Combining: ${files[*]}"
-          COVERAGE_FILE=.coverage coverage combine "${files[@]}"
-          COVERAGE_FILE=.coverage coverage xml -o coverage-e2e.xml
-          COVERAGE_FILE=.coverage coverage html -d htmlcov-e2e
+          echo "Combining E2E files: ${files[*]}"
+          COVERAGE_FILE=coverage-e2e-combined.data coverage combine "${files[@]}"
+          COVERAGE_FILE=coverage-e2e-combined.data coverage xml -o coverage-e2e.xml
+          COVERAGE_FILE=coverage-e2e-combined.data coverage html -d htmlcov-e2e
           echo "✅ E2E coverage: $(ls -lh coverage-e2e.xml)"
 
-      - name: Upload coverage XML
+      - name: Upload E2E coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-e2e-xml
+          name: e2e-coverage-data
+          path: coverage-e2e-combined.data
+
+      - name: Upload E2E coverage XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-coverage-xml
           path: coverage-e2e.xml
 
       - name: Upload HTML report
@@ -495,12 +513,13 @@ jobs:
         run: docker compose --env-file ../.env.docker down -v --remove-orphans
 
   # ────────────────────────────────────────────────────────────────────────────
-  # 4) AGGREGATE UNIT — combine les shards de manière robuste
+  # 4) AGRÉGATION GLOBALE — Unit + Integration + E2E
   # ────────────────────────────────────────────────────────────────────────────
-  aggregate-unit-coverage:
+  aggregate-coverage:
+    name: aggregate-all-coverage
     runs-on: ubuntu-latest
-    needs: unit
-    timeout-minutes: 5
+    needs: [unit, integration, e2e]
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -516,99 +535,179 @@ jobs:
       - name: Create staging directory
         run: mkdir -p coverage-staging
 
-      # Téléchargements explicites pour éviter les conflits
-      - name: Download all shard artifacts
+      # Téléchargement de TOUS les artifacts de coverage
+      - name: Download unit coverage artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: coverage-shard-*
-          path: coverage-staging/
+          pattern: unit-coverage-shard-*
+          path: coverage-staging/unit/
           merge-multiple: false
 
-      - name: Verify downloads
+      - name: Download integration coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: integration-coverage-data
+          path: coverage-staging/integration/
+
+      - name: Download E2E coverage  
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-coverage-data
+          path: coverage-staging/e2e/
+
+      - name: Verify all downloads
         run: |
-          echo "=== Downloaded artifacts ==="
+          echo "=== All downloaded coverage artifacts ==="
           find coverage-staging -type f -ls
           
-          echo -e "\n=== Unit coverage files ==="
-          find coverage-staging -name ".coverage.unit.*" -type f -exec ls -lh {} \;
+          echo -e "\n=== Coverage data files breakdown ==="
+          echo "Unit shards:"
+          find coverage-staging/unit -name "*.data" -exec ls -lh {} \; || echo "  No unit files"
+          echo "Integration:"
+          find coverage-staging/integration -name "*.data" -exec ls -lh {} \; || echo "  No integration files"
+          echo "E2E:"
+          find coverage-staging/e2e -name "*.data" -exec ls -lh {} \; || echo "  No e2e files"
 
-      - name: Combine unit coverage
+      - name: Combine ALL coverage (unit + integration + e2e)
         run: |
           set -euo pipefail
           
-          # Collecte de tous les fichiers unit non vides
+          # Collecte de TOUS les fichiers de coverage non vides
           files=()
+          
+          # Unit shards
           while IFS= read -r -d '' file; do
             if [[ -s "$file" ]]; then
               files+=("$file")
+              echo "Added unit: $file"
             fi
-          done < <(find coverage-staging -name ".coverage.unit.*" -type f -print0)
+          done < <(find coverage-staging/unit -name "*.data" -type f -print0 2>/dev/null || true)
+          
+          # Integration
+          while IFS= read -r -d '' file; do
+            if [[ -s "$file" ]]; then
+              files+=("$file")
+              echo "Added integration: $file"
+            fi
+          done < <(find coverage-staging/integration -name "*.data" -type f -print0 2>/dev/null || true)
+          
+          # E2E
+          while IFS= read -r -d '' file; do
+            if [[ -s "$file" ]]; then
+              files+=("$file")
+              echo "Added e2e: $file"
+            fi
+          done < <(find coverage-staging/e2e -name "*.data" -type f -print0 2>/dev/null || true)
           
           if [[ ${#files[@]} -eq 0 ]]; then
-            echo "❌ No unit coverage files found"
-            echo "Check that unit job succeeded and uploaded artifacts"
+            echo "❌ No coverage files found for global aggregation"
+            echo "This means one or more test jobs failed to produce coverage"
             exit 1
           fi
           
-          echo "=== Combining ${#files[@]} unit coverage files ==="
+          echo "=== Combining ${#files[@]} coverage files from ALL test types ==="
           printf '%s\n' "${files[@]}"
           
-          # Combine
+          # Combine global
           coverage combine "${files[@]}"
           
-          # Reports
+          # Génération des rapports finaux
+          echo "=== GLOBAL COVERAGE REPORT ==="
           coverage report --skip-covered --show-missing
-          coverage xml -o coverage-unit.xml  
-          coverage html -d htmlcov-unit
           
-          echo "✅ Unit coverage combined: $(ls -lh coverage-unit.xml)"
+          coverage xml -o coverage-global.xml  
+          coverage html -d htmlcov-global
+          
+          echo "✅ Global coverage combined: $(ls -lh coverage-global.xml)"
+          
+          # Stats par type (optionnel)
+          echo -e "\n=== Coverage Stats ==="
+          echo "Total files combined: ${#files[@]}"
+          unit_count=$(find coverage-staging/unit -name "*.data" -type f | wc -l)
+          integration_count=$(find coverage-staging/integration -name "*.data" -type f | wc -l)  
+          e2e_count=$(find coverage-staging/e2e -name "*.data" -type f | wc -l)
+          echo "  Unit shards: $unit_count"
+          echo "  Integration: $integration_count" 
+          echo "  E2E: $e2e_count"
 
-      - name: Upload combined XML
+      - name: Upload global coverage XML
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-unit-xml
-          path: coverage-unit.xml
+          name: coverage-global-xml
+          path: coverage-global.xml
 
-      - name: Upload HTML report
+      - name: Upload global coverage data
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-global-data
+          path: .coverage
+
+      - name: Upload global HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: htmlcov-unit
-          path: htmlcov-unit/
+          name: htmlcov-global
+          path: htmlcov-global/
           if-no-files-found: ignore
 
+      # Bonus: upload vers des services externes si configuré
+      - name: Upload to Codecov (if configured)
+        if: env.CODECOV_TOKEN != ''
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          curl -s https://codecov.io/bash | bash -s -- -f coverage-global.xml
+
   # ────────────────────────────────────────────────────────────────────────────
-  # 5) GATE — Point de passage unique pour les protections de branche
+  # 5) GATE — Point de passage unique avec rapport de coverage globale
   # ────────────────────────────────────────────────────────────────────────────
   gate:
     name: ci-gate
     runs-on: ubuntu-latest
-    needs: [unit, aggregate-unit-coverage, integration, e2e]
-    timeout-minutes: 2
+    needs: [unit, integration, e2e, aggregate-coverage]
+    timeout-minutes: 3
     
     steps:
       - name: All checks passed
         run: |
-          echo "🎉 All CI jobs completed successfully!"
+          echo "🎉 ALL CI JOBS COMPLETED SUCCESSFULLY!"
           echo "✅ Unit tests (4 shards) - PASSED"
           echo "✅ Integration tests - PASSED" 
           echo "✅ E2E tests - PASSED"
-          echo "✅ Coverage aggregation - PASSED"
+          echo "✅ Global coverage aggregation - PASSED"
 
-      # Optionnel: télécharger les coverage pour un rapport final
-      - name: Download coverage reports
-        if: github.ref == 'refs/heads/main'
+      - name: Download final coverage report
         uses: actions/download-artifact@v4
         with:
-          pattern: coverage-*-xml
-          path: final-coverage/
-          merge-multiple: true
+          name: coverage-global-xml
+          path: ./
 
-      - name: Final coverage summary
-        if: github.ref == 'refs/heads/main'
+      - name: Display coverage summary
         run: |
-          echo "=== Final Coverage Files ==="
-          find final-coverage -name "*.xml" -exec basename {} \; | sort
-          
-          # Ici vous pourriez uploader vers CodeCov, SonarQube, etc.
-          # curl -s https://codecov.io/bash | bash -s -- -t $CODECOV_TOKEN
+          if [[ -f coverage-global.xml ]]; then
+            echo "=== FINAL COVERAGE SUMMARY ==="
+            python3 -c "
+            import xml.etree.ElementTree as ET
+            tree = ET.parse('coverage-global.xml')
+            root = tree.getroot()
+            line_rate = float(root.get('line-rate', 0)) * 100
+            branch_rate = float(root.get('branch-rate', 0)) * 100
+            print(f'Lines covered: {line_rate:.1f}%')
+            print(f'Branches covered: {branch_rate:.1f}%')
+            "
+          else
+            echo "⚠️  Global coverage file not found"
+          fi
+
+      - name: Quality gate check
+        run: |
+          echo "🚪 All quality gates passed - ready for merge!"
+          echo ""
+          echo "Summary:"
+          echo "- ✅ All unit tests passed across 4 shards"
+          echo "- ✅ Integration tests with Docker stack passed"
+          echo "- ✅ End-to-end tests passed"
+          echo "- ✅ Coverage collected and aggregated from all test types"
+          echo "- ✅ No blocking issues detected"
+          echo ""
+          echo "This commit is safe to merge! 🚀"
