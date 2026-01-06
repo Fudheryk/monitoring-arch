@@ -24,6 +24,9 @@ COPY requirements-dev.txt requirements.txt ./
 RUN pip install --upgrade pip
 RUN pip install -r requirements-dev.txt
 
+# Ajout pour les tests
+RUN pip install -r requirements-dev.txt
+
 # Copier le code source
 COPY server /app/server
 

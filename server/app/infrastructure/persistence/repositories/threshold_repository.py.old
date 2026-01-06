@@ -1,0 +1,125 @@
+from __future__ import annotations
+"""
+server/app/infrastructure/persistence/repositories/threshold_repository.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Repository léger pour manipuler les thresholds.
+
+Rôle :
+- Fournir des helpers simples pour récupérer / lister les seuils.
+- Centraliser la logique de filtrage de base (is_active, etc.)
+  afin que le service d'évaluation ne se préoccupe que de la logique métier.
+"""
+
+from uuid import UUID
+from typing import Optional
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.infrastructure.persistence.database.models.threshold import Threshold
+from app.infrastructure.persistence.database.models.metric import Metric
+
+
+def _as_uuid(v):
+    """
+    Petit helper permissif pour accepter indifféremment :
+    - un UUID natif
+    - une chaîne str
+    - ou renvoyer tel quel si déjà dans un autre format utilisable.
+    """
+    if isinstance(v, UUID):
+        return v
+    if isinstance(v, str):
+        try:
+            return UUID(v)
+        except Exception:
+            return v
+    return v
+
+
+class ThresholdRepository:
+    """
+    Repository léger pour manipuler les thresholds.
+    Utilisé par les services ou endpoints si besoin.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self.s = session
+
+    # ------------------------------------------------------------------
+    # Requêtes
+    # ------------------------------------------------------------------
+
+    def list_by_metric(self, metric_instance_id) -> list[Threshold]:
+        """
+        Liste tous les seuils d'une métrique donnée, quel que soit leur état
+        (actifs, inactifs, suggestions...).
+
+        Utile pour l'UI de configuration d'une métrique.
+        """
+        mid = _as_uuid(metric_instance_id)
+        return list(
+            self.s.scalars(
+                select(Threshold)
+                .where(Threshold.metric_instance_id == mid)
+                .order_by(Threshold.name)
+            ).all()
+        )
+
+    def get_default(self, metric_instance_id) -> Optional[Threshold]:
+        """
+        Récupère le seuil nommé "default" pour une métrique donnée,
+        quel que soit son état (actif ou suggestion).
+
+        C'est ce que les endpoints /metrics/{metric_instance_id}/thresholds/default
+        vont créer / mettre à jour.
+        """
+        mid = _as_uuid(metric_instance_id)
+        return self.s.scalars(
+            select(Threshold).where(
+                Threshold.metric_instance_id == mid,
+                Threshold.name == "default",
+            )
+        ).first()
+
+    def for_machine(self, machine_id) -> list[tuple[Threshold, Metric]]:
+        """
+        Retourne les thresholds à ÉVALUER pour une machine.
+
+        Règle actuelle :
+        - uniquement les thresholds actifs : is_active = TRUE
+        (propositions de seuils) et ne doivent pas déclencher d'alertes
+        """
+        mid = _as_uuid(machine_id)
+        q = (
+            select(Threshold, Metric)
+            .join(Metric, Threshold.metric_instance_id == Metric.id)
+            .where(
+                Metric.machine_id == mid,
+                Threshold.is_active.is_(True),
+            )
+        )
+        return list(self.s.execute(q).all())
+
+    # ------------------------------------------------------------------
+    # Mutations
+    # ------------------------------------------------------------------
+
+    def add(self, t: Threshold) -> Threshold:
+        """
+        Enregistre un nouveau Threshold dans la session.
+        Le commit est laissé à la charge de l'appelant.
+        """
+        self.s.add(t)
+        return t
+
+    def update_fields(self, t: Threshold, **fields) -> Threshold:
+        """
+        Mise à jour générique de champs sur un Threshold existant.
+
+        Exemple :
+            repo.update_fields(thr, is_active=True, severity="critical")
+        """
+        for k, v in fields.items():
+            setattr(t, k, v)
+        return t

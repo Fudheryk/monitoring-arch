@@ -1,30 +1,53 @@
 # docker/docker-compose.yml
+# -----------------------------------------------------------------------------
+# Compose complet pour :
+# - db, redis
+# - api, worker, beat (+ job migrate)
+# - web (FastAPI SSR/Jinja, port 3000)
+# - proxy (Nginx unifiant / et /api) — optionnel
+# -----------------------------------------------------------------------------
+
 x-app-common: &app-common
   build:
     context: ..
-    dockerfile: ./server/Dockerfile
+    dockerfile: ./server/Dockerfile.dev
   env_file: ../.env.docker
   working_dir: /app/server
   volumes:
     - ../server:/app/server:cached
-  depends_on:
-    db:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
   restart: unless-stopped
 
 services:
+  migrate:
+    <<: *app-common
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   api:
     <<: *app-common
-    command: ["api"]  # via /entrypoint.sh
+    command: ["api"]
     environment:
-      # parle au service "db" du réseau Docker
       DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       STUB_SLACK: "1"
-      ALERT_REMINDER_MINUTES: "1"
+      ALERT_REMINDER_MINUTES: "30"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+      # En dev, si tu accèdes directement à http://localhost:3000
+      CORS_ALLOW_ORIGINS: "http://localhost:3000,http://web:3000"
+      LOG_LEVEL: DEBUG
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     stop_signal: SIGINT
@@ -42,18 +65,51 @@ services:
   worker:
     <<: *app-common
     command: >
-      celery -A app.workers.celery_app.celery worker
-      --hostname=worker@%h
-      -Q ingest,evaluate,heartbeat,http,notify
-      -O fair -l info
+      sh -lc "
+        alembic upgrade head &&
+        celery -A app.workers.celery_app.celery worker
+        -Q ingest,evaluate,heartbeat,http,notify,outbox
+        --hostname=worker@%h
+        -O fair -l debug
+      "
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      STUB_SLACK: "1"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+      ALERT_REMINDER_MINUTES: "30"
+      LOG_LEVEL: DEBUG
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     stop_grace_period: 30s
 
   beat:
     <<: *app-common
-    command: celery -A app.workers.celery_app.celery beat -l info
+    command: >
+      sh -lc "
+        alembic upgrade head &&
+        celery -A app.workers.celery_app.celery beat -l debug
+        --schedule /tmp/celerybeat-schedule
+      "
+    environment:
+      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      STUB_SLACK: "1"
+      PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+      ALERT_REMINDER_MINUTES: "30"
+      LOG_LEVEL: DEBUG
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     stop_grace_period: 30s
 
   db:
@@ -88,6 +144,65 @@ services:
     ports:
       - "6379:6379"
     restart: unless-stopped
+
+  web:
+    build:
+      context: ../webapp
+      dockerfile: Dockerfile.dev
+    entrypoint: ""                 # pas d’entrypoint hérité du backend
+    working_dir: /app/webapp
+    command: ["uvicorn","app.main:app","--host","0.0.0.0","--port","3000","--reload"]
+    environment:
+      API_BASE_URL: "http://api:8000"
+      LOGIN_PATH: "/login"
+      PUBLIC_PATHS: "/login,/static,/_health,/health"
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ../webapp:/app/webapp:cached
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/_health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  flaky:
+    build:
+      context: ./flaky
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:80:80"
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - flaky.local
+          - flaky.test
+          - flaky.dev
+  
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # UI web
 
 volumes:
   pg_data:

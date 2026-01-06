@@ -1,0 +1,14 @@
+<h2>Liste des serveurs</h2>
+<div class="grid">
+  {% for machine in machines %}
+  <div class="card">
+    <h3>{{ machine.hostname }}</h3>
+    <p>{{ machine.os }} • {{ machine.architecture }}</p>
+    <button
+      type="button"
+      onclick="loadView('machine', '{{ machine.id }}')"
+      data-machine-id="{{ machine.id }}"
+    >Voir détails</button>
+  </div>
+  {% endfor %}
+</div>

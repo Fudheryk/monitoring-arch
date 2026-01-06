@@ -1,0 +1,83 @@
+<section id="sites">
+  <h2>🌐 Sites monitorés</h2>
+
+  <form id="site-form" class="site-form" novalidate>
+    <div class="form-group-horizontal">
+      <div class="input-wrapper">
+        <input type="url" id="site-url" name="url"
+               placeholder="https://exemple.com"
+               class="pretty-input"
+               required>
+        <div id="url-error" class="error-msg" style="display:none;">
+          URL invalide : https://exemple.com
+        </div>
+      </div>
+      <button type="submit">Ajouter</button>
+    </div>
+  </form>
+
+  <div class="grid" id="site-grid">
+    {% if sites and sites|length > 0 %}
+      {% for site in sites %}
+      <div class="card site-card {{ 'paused' if not site.is_active else '' }}">
+        <div class="site-info">
+          <a href="{{ site.url }}" target="_blank" rel="noopener noreferrer" class="site-link">
+            {{ site.url | replace('https://', '') | replace('http://', '') }}
+          </a>
+
+          <span class="site-status
+            {% if site.is_pending %}pending
+            {% elif not site.is_up %}down
+            {% endif %}">
+            
+            <span class="status-indicator
+              {% if site.is_pending %}status-pending
+              {% elif site.is_up %}status-up
+              {% else %}status-down
+              {% endif %}">
+            </span>
+
+            {% if site.is_pending %}
+              EN ATTENTE
+            {% elif site.is_up %}
+              EN LIGNE
+            {% else %}
+              HORS-LIGNE
+            {% endif %}
+
+            {# Affichage des durées, gérées en JS via data-age #}
+            {% if not site.is_pending %}
+              {% if site.last_check_age_sec is not none %}
+                <span class="nm-last-check" data-age="{{ site.last_check_age_sec|int }}"></span>
+              {% endif %}
+
+              {% if site.last_state_change_age_sec is not none %}
+                <span class="nm-state-since" data-age="{{ site.last_state_change_age_sec|int }}">
+                  {% if site.is_up %}
+                    (UP depuis)
+                  {% else %}
+                    (DOWN depuis)
+                  {% endif %}
+                </span>
+              {% endif %}
+            {% endif %}
+          </span>
+        </div>
+
+        <div class="site-actions-row">
+          <button class="pause-btn"
+                data-id="{{ site.id }}"
+                data-active="{{ 'true' if site.is_active else 'false' }}">
+          <span class="emoji">{{ '⏸' if site.is_active else '▶' }}</span>
+          {{ 'Mettre en pause' if site.is_active else 'Réactiver' }}
+          </button>
+          <button class="delete-btn" data-id="{{ site.id }}">Supprimer</button>
+        </div>
+        
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="card"><div class="muted">Aucun site configuré.</div></div>
+    {% endif %}
+  </div>
+</section>

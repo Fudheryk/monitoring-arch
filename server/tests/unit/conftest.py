@@ -21,6 +21,8 @@ def _unit_env_session_defaults():
     os.environ.setdefault("SLACK_WEBHOOK", "http://localhost/dummy-204")
     os.environ.setdefault("ALERT_REMINDER_MINUTES", "1")
     os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "1")
+    os.environ.setdefault("INGEST_FUTURE_MAX_SECONDS", "120")       # 2 minutes de marge vers le futur
+    os.environ.setdefault("INGEST_LATE_MAX_SECONDS", "31536000")    # 1 an vers le passé
 
     if "app.core.config" in sys.modules:
         importlib.reload(sys.modules["app.core.config"])

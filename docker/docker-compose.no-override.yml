@@ -1,0 +1,10 @@
+services:
+  worker:
+    environment:
+      STUB_SLACK: "1"
+  api:
+    environment:
+      STUB_SLACK: "1" 
+  beat:
+    environment:
+      STUB_SLACK: "1"

@@ -22,6 +22,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # AJOUT: seuil de couverture configurable au niveau pipeline
+  MIN_COVERAGE: "70"
+
 jobs:
 
   # ────────────────────────────────────────────────────────────────────────────
@@ -78,7 +82,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          pip install pytest-split
+          pip install pytest-split pytest-xdist coverage
 
       - name: Verify environment
         run: |
@@ -101,7 +105,7 @@ jobs:
           echo "→ Running shard ${{ matrix.shard }}/4 with coverage file: $COVERAGE_FILE"
           
           # Tentative pytest-split d'abord
-          if pytest -m "unit" --splits 4 --group ${{ matrix.shard }} -n auto \
+          if pytest -m "unit or contract" --splits 4 --group ${{ matrix.shard }} -n auto \
                 --cov=server/app --cov-config=.coveragerc --cov-branch \
                 --cov-report=term-missing:skip-covered --cov-fail-under=0 \
                 --maxfail=3 --tb=short; then
@@ -128,7 +132,7 @@ jobs:
               echo "Running ${#SLICE[@]} test files:"
               printf '  %s\n' "${SLICE[@]}"
               
-              pytest -n auto "${SLICE[@]}" -m "unit" \
+              pytest -n auto "${SLICE[@]}" -m "unit or contract" \
                 --cov=server/app --cov-config=.coveragerc --cov-branch \
                 --cov-report=term-missing:skip-covered --cov-fail-under=0 \
                 --maxfail=3 --tb=short
@@ -162,7 +166,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────────────────
   integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     
     env:
       STUB_SLACK: "1"
@@ -202,6 +206,7 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements-dev.txt
           pip install "psycopg[binary]>=3.1,<4.0"
+          pip install coverage
 
       - name: Prepare environment
         run: |
@@ -218,12 +223,11 @@ jobs:
         env:
           API_COVERAGE: "1"
           WORKER_COVERAGE: "1"
-          # Fichier dans le conteneur avec nom standard
           COVERAGE_FILE: "/app/server/coverage-api-container.data"
           DOCKER_BUILDKIT: 1
           BUILDKIT_INLINE_CACHE: 1
         run: |
-          docker compose --env-file ../.env.docker build --build-arg BUILDKIT_INLINE_CACHE=1 api
+          docker compose --env-file ../.env.docker build api worker
           docker compose --env-file ../.env.docker up -d db redis api worker
 
       - name: Wait for database
@@ -665,7 +669,7 @@ jobs:
     name: ci-gate
     runs-on: ubuntu-latest
     needs: [unit, integration, e2e, aggregate-coverage]
-    timeout-minutes: 3
+    timeout-minutes: 5
     
     steps:
       - name: All checks passed

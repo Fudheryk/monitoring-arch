@@ -32,9 +32,68 @@ _run_with_coverage() {
 }
 
 run_api() {
-  log "Applying migrations…"
-  alembic upgrade head
+  log "Checking DB schema state…"
 
+  # Décide le chemin: 10=has_alembic, 20=fresh, 30=has_schema_no_alembic, 40=incoherent
+  state=$(python - <<'PY'
+import os, sys
+from sqlalchemy import create_engine, inspect
+
+url = os.environ.get("DATABASE_URL")
+if not url:
+    print("no-db-url"); sys.exit(99)
+
+eng = create_engine(url)
+insp = inspect(eng)
+
+tables = set(insp.get_table_names(schema="public"))
+have_alembic = "alembic_version" in tables
+
+# Ensemble minimal des tables "app" (ajuste si nécessaire)
+app_tables = {
+    "clients","api_keys","machines","metrics","samples","thresholds",
+    "alerts","incidents","http_targets","ingest_events","outbox_events",
+    "notification_log","client_settings","users"
+}
+
+if have_alembic:
+    code = 10              # Schéma versionné → upgrade
+elif tables.isdisjoint(app_tables):
+    code = 20              # Base “vide” (pas de tables app) → upgrade
+elif app_tables.issubset(tables):
+    code = 30              # Schéma complet mais sans alembic_version → stamp head, puis upgrade
+else:
+    code = 40              # État incohérent → stop (intervention humaine)
+print(code)
+sys.exit(0)
+PY
+)
+
+  case "$state" in
+    10)
+      log "alembic_version present → alembic upgrade head"
+      alembic upgrade head
+      ;;
+    20)
+      log "fresh DB (no app tables) → alembic upgrade head"
+      alembic upgrade head
+      ;;
+    30)
+      log "schema present but no alembic_version → alembic stamp head + upgrade head"
+      alembic stamp head
+      alembic upgrade head
+      ;;
+    40)
+      log "Inconsistent DB schema detected → refusing to auto-heal. Please fix manually."
+      exit 1
+      ;;
+    *)
+      log "Unexpected state from checker: $state"
+      exit 1
+      ;;
+  esac
+
+  # Démarrage Uvicorn (inchangé)
   if [[ "${API_COVERAGE:-0}" == "1" ]] && _have_coverage; then
     log "API_COVERAGE=1 → running uvicorn under coverage"
     cd /app/server
@@ -45,6 +104,7 @@ run_api() {
     exec uvicorn app.main:app --host 0.0.0.0 --port 8000
   fi
 }
+
 
 run_celery_like() {
   # Wrap celery worker/beat in coverage when requested

@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+WORKDIR /app/webapp
+
+# Pour le healthcheck (compose) : wget
+RUN apt-get update && apt-get install -y --no-install-recommends wget && \
+    rm -rf /var/lib/apt/lists/*
+
+# Dépendances Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Code
+COPY . .
+
+# Config runtime
+ENV API_BASE_URL=http://api:8000
+EXPOSE 3000
+
+# Dev server (reload)
+CMD ["uvicorn","app.main:app","--host","0.0.0.0","--port","3000","--reload"]

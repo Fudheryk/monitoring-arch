@@ -30,7 +30,7 @@ if os.getenv("INTEG_STACK_UP", "") != "1":
 def test_http_monitor_cooldown(monkeypatch):
     # Imports *dans* le test pour prendre les modules "réels" d'intégration
     from app.application.services.http_monitor_service import check_http_targets
-    from app.infrastructure.persistence.database.session import get_sync_session
+    from app.infrastructure.persistence.database.session import open_session
     from app.infrastructure.persistence.database.models.client import Client
     from app.infrastructure.persistence.database.models.http_target import HttpTarget
     from app.infrastructure.persistence.database.models.incident import Incident
@@ -89,14 +89,14 @@ def test_http_monitor_cooldown(monkeypatch):
     monkeypatch.setattr(nt.notify, "apply_async", _fake_apply_async, raising=True)
 
     # Nettoyage défensif : supprime les éventuels états précédents pour *ce* client
-    with get_sync_session() as s:
+    with open_session() as s:
         s.execute(delete(NotificationLog).where(NotificationLog.client_id == client_id))
         s.execute(delete(Incident).where(Incident.client_id == client_id))
         s.execute(delete(HttpTarget).where(HttpTarget.client_id == client_id))
         s.commit()
 
     # 1) Crée un client (si FK requise) et une cible due (last_check_at=None)
-    with get_sync_session() as s:
+    with open_session() as s:
         if s.scalar(select(Client).where(Client.id == client_id)) is None:
             s.add(Client(id=client_id, name="itest-client"))
             s.commit()
@@ -131,7 +131,7 @@ def test_http_monitor_cooldown(monkeypatch):
     assert_delta_enqueues(1, "first pass should enqueue at least one notification")
 
     # Armer le cooldown : on log une notif 'success' pour l'incident créé
-    with get_sync_session() as s:
+    with open_session() as s:
         inc = s.scalars(
             select(Incident).where(
                 Incident.client_id == client_id,
@@ -164,7 +164,7 @@ def test_http_monitor_cooldown(monkeypatch):
     assert (after - before) == 0, f"no new notification expected without cooldown expiry (delta={after - before})"
 
     # 4) Expire le cooldown ET rend la cible due
-    with get_sync_session() as s:
+    with open_session() as s:
         log = s.scalars(select(NotificationLog).where(NotificationLog.client_id == client_id)).first()
         assert log is not None
         # Vieillir l'envoi pour dépasser le cooldown (implémentation/ENV >= 1 minute)

@@ -1,0 +1,16 @@
+<footer>
+  &copy; 2025 NeonMonitor - Tous droits réservés<br>
+  <span style="font-size: 0.8rem;">Version {{ version_app or "0.1.0" }}</span>
+</footer>
+
+<div id="global-saving-indicator">💾 Enregistrement...</div>
+
+{# Charge le JS uniquement si l’utilisateur est connecté (transmis via context) #}
+{% if user %}
+<script src="/static/js/timefmt.js?v={{ version_cache_bust }}"></script>
+<script src="/static/js/machines.js?v={{ version_cache_bust }}"></script>
+<script src="/static/js/sites.js?v={{ version_cache_bust }}"></script>
+<script src="/static/js/main.js?v={{ version_cache_bust }}"></script>
+<script src="/static/js/events.js?v={{ version_cache_bust }}"></script>
+<script src="/static/js/settings.js?v={{ version_cache_bust }}"></script>
+{% endif %}

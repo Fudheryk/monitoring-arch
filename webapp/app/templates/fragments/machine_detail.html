@@ -1,0 +1,552 @@
+{# =============================================================================
+  fragments/machine_detail.html
+  Objectif : afficher les métriques par SECTIONS (= group_name)
+  - Titre du groupe en MAJUSCULES
+  - "misc" toujours en DERNIER
+  - (les services seront ajoutés APRÈS misc, dans un bloc séparé, plus bas)
+  Pré-requis : metric.group_name est présent dans le JSON (MetricDetailOut)
+============================================================================= #}
+
+<section id="machines">
+  <h2>🖥️ Serveurs</h2>
+
+  <div class="machines-container">
+    <!-- ========================================================= -->
+    <!-- ASIDE : liste des machines                               -->
+    <!-- ========================================================= -->
+    <aside class="machines-aside">
+      {% for m in all_machines %}
+      <button
+        type="button"
+        onclick="loadView('machine', '{{ m.id }}')"
+        data-machine-id="{{ m.id }}"
+        class="machine-button{% if m.id == current_machine.id %} active{% endif %}">
+        {{ m.hostname }}
+
+        {# Badge incidents OPEN #}
+        {% if (m.open_incidents_count | default(0)) | int > 0 %}
+          <span class="pill incident-count">
+            {{ m.open_incidents_count }}
+          </span>
+        {% endif %}
+      </button>
+      {% endfor %}
+    </aside>
+
+    <!-- ========================================================= -->
+    <!-- MAIN : détail machine                                    -->
+    <!-- ========================================================= -->
+    <main class="machine-main" data-machine-id="{{ current_machine.id }}">
+      <h2>
+        {{ current_machine.hostname }}
+        {% if current_machine.status %}
+          <span class="pill {{ 'down' if current_machine.status == 'DOWN' else 'up' }}">
+            {{ current_machine.status }}
+          </span>
+        {% endif %}
+      </h2>
+
+      <!-- ===================================================== -->
+      <!-- Filtres                                               -->
+      <!-- ===================================================== -->
+      <div class="filter-bar">
+        <input
+          type="text"
+          id="metricSearch"
+          placeholder="Rechercher une métrique"
+          oninput="filterMetrics(); saveFiltersToCookie()"
+          class="pretty-input search"
+          data-machine-id="{{ current_machine.id }}">
+
+        <label class="filter-checkbox">
+          <input type="checkbox" id="hideInactive"
+                 onchange="filterMetrics(); saveFiltersToCookie()">
+          Actifs
+        </label>
+    
+        <label class="filter-checkbox">
+          <input type="checkbox" id="showAdvanced"
+                onchange="filterMetrics(); saveFiltersToCookie()">
+          Avancée
+        </label>
+      </div>
+
+      <!-- ===================================================== -->
+      <!-- METRICS (par groupes)                                 -->
+      <!-- ===================================================== -->
+      <h3>Métriques</h3>
+
+      {# -----------------------------------------------------------------------
+         On groupe les métriques par group_name.
+         Jinja "groupby" va grouper en objets {grouper, list}.
+         IMPORTANT : "misc" doit être en dernier => on le met de côté via namespace.
+      ------------------------------------------------------------------------ #}
+      {% set ns = namespace(misc_group=None) %}
+      {% set grouped = metrics | groupby('group_name') %}
+
+      {# Container global (plus une seule .grid, car chaque groupe a sa propre .grid) #}
+      <div id="metricsGrid">
+
+        {# =====================================================
+           1) Tous les groupes SAUF misc
+           ===================================================== #}
+        {% for g in grouped %}
+          {% set gname = (g.grouper | default('misc')) %}
+
+          {% if gname == 'misc' %}
+            {# On stocke misc pour l'afficher à la fin #}
+            {% set ns.misc_group = g %}
+          {% else %}
+            <section class="metric-group" data-group="{{ gname }}">
+              <!-- Titre du groupe en majuscules -->
+              <h4 class="metric-group-title">{{ gname | upper | replace('_', ' ') }}</h4>
+
+              <p class="no-results group-no-results" style="display:none;">Aucune métrique</p>
+
+              <!-- Grille des cards de CE groupe -->
+              <div class="grid">
+                {% for metric in g.list %}
+
+                  {# =========================
+                    Pré-calculs template
+                    ========================= #}
+                  {% set last = metric.last_sample %}
+                  {% set has_last = last is not none %}
+                  {% set th = metric.default_threshold %}
+                  {% set th_exists = th is not none %}
+                  {% set last_ts = last.ts_epoch if has_last else none %}
+
+                  {% set raw_type =
+                    'number' if has_last and last.num_value is not none else
+                    'bool'   if has_last and last.bool_value is not none else
+                    'string' if has_last and last.str_value is not none else
+                    'none'
+                  %}
+
+                  {# Condition par défaut #}
+                  {% set c = (th.condition if th_exists and th.condition else metric.default_condition) %}
+                  {% if not c %}
+                    {% set c = 'gt' if raw_type == 'number' else 'eq' %}
+                  {% endif %}
+
+                  {# Valeur par défaut #}
+                  {% if raw_type == 'number' %}
+                    {% set default_val =
+                      (th.value_num if th_exists and th.value_num is not none
+                      else (last.num_value if has_last else '')) %}
+                  {% elif raw_type == 'bool' %}
+                    {% set default_val =
+                      ('1' if (th_exists and th.value_bool)
+                      else '0' if (th_exists and th.value_bool is not none and not th.value_bool)
+                      else ('1' if (has_last and last.bool_value) else '0')) %}
+                  {% else %}
+                    {% set default_val =
+                      (th.value_str if th_exists and th.value_str is not none
+                      else (last.str_value if has_last else '')) %}
+                  {% endif %}
+
+                  {% set is_no_data = (metric.status == 'NO_DATA') %}
+                  {% set is_breach = (metric.is_firing | default(false)) %}
+                  {% set is_critical = is_no_data or is_breach %}
+
+                  <div class="card metric-card {{ 'critical' if is_critical else '' }} {{ 'inactive' if not metric.is_alerting_enabled }}"
+                      data-search="{{ metric.name }}"
+                      data-suggested="{{ '1' if metric.is_suggested_critical else '0' }}"
+                      data-no-data="{{ '1' if is_no_data else '0' }}"
+                      data-breach="{{ '1' if is_breach else '0' }}"
+                      data-group="{{ metric.group_name }}"
+                      data-raw-type="{{ raw_type }}"
+                      data-raw-num="{{ last.num_value if has_last else '' }}"
+                      data-raw-bool="{{ '1' if has_last and last.bool_value else '0' }}"
+                      data-raw-str="{{ last.str_value if has_last else '' }}">
+
+                    <!-- Header -->
+                    <div class="card-header">
+                      <div class="card-label-row">
+                        <span class="info-icon"
+                              data-tooltip="{{ metric.description | default('') }}">i</span>
+
+                        {% if metric.is_suggested_critical %}
+                          <span class="suggested">★</span>
+                        {% endif %}
+
+                        <span class="metric-label" title="{{ metric.name }}">
+                          {{ metric.name }}
+                        </span>
+
+                        <!-- Toggle Alerte -->
+                        <form method="post"
+                              action="/webapi/metrics/{{ metric.id }}/alerting"
+                              data-endpoint="alerting"
+                              data-metric-id="{{ metric.id }}"
+                              class="threshold-form">
+                          <label class="switch small-switch">
+                            <input type="checkbox"
+                                  name="alert_enabled"
+                                  value="1"
+                                  {% if metric.is_alerting_enabled %}checked{% endif %}
+                                  onchange="autoSave(this.form)">
+                            <span class="slider"></span>
+                          </label>
+                        </form>
+                      </div>
+                    </div>
+
+                    <!-- Dernière valeur + âge -->
+                    <div class="metric-last-value">
+                      {% if has_last %}
+                        {{ last.num_value
+                          if raw_type=='number'
+                          else ('Actif' if last.bool_value else 'Inactif')
+                          if raw_type=='bool'
+                          else last.str_value }}
+
+                        {% if last_ts %}
+                          <span class="meta-sep">•</span>
+                          <span class="nm-metric-age" data-age="{{ last.age_sec }}">
+                            il y a {{ last.age_human }}
+                          </span>
+                        {% endif %}
+                      {% else %}
+                        —
+                      {% endif %}
+                    </div>
+
+                    <!-- Meta -->
+                    <div class="metric-meta">
+                      {% if metric.is_alerting_enabled %}
+                        <span class="pill state-on">Alerte 🔔</span>
+                      {% else %}
+                        <span class="pill state-off">Alerte 🔕</span>
+                      {% endif %}
+
+                      <span class="meta-sep">•</span>
+                      {% if metric.status == 'NO_DATA' %}
+                        <span class="pill no-data data-status">NO DATA</span>
+                      {% else %}
+                        <span class="pill data-ok data-status">DATA OK</span>
+                      {% endif %}
+
+                      {% if not th_exists %}
+                        <span class="meta-sep">•</span>
+                        {% if metric.is_alerting_enabled %}
+                          <span class="pill warning threshold-undefined">À définir</span>
+                        {% else %}
+                          <span class="pill state-off threshold-undefined">Non défini</span>
+                        {% endif %}
+                      {% endif %}
+                    </div>
+
+                    <!-- Édition du seuil -->
+                    <form method="post"
+                          action="/webapi/metrics/{{ metric.id }}/thresholds/default"
+                          data-endpoint="threshold"
+                          data-metric-id="{{ metric.id }}"
+                          class="threshold-form editor"
+                          data-threshold-exists="{{ '1' if th_exists else '0' }}">
+
+                      <div class="threshold-row">
+                        <span class="label-fixed-width">Alerter si</span>
+
+                        <div class="threshold-editor">
+                          <select name="comparison"
+                                  class="pretty-select"
+                                  onchange="autoSave(this.form)">
+                            {% if raw_type == 'number' %}
+                              <option value="gt" {{ 'selected' if c == 'gt' else '' }}>></option>
+                              <option value="ge" {{ 'selected' if c == 'ge' else '' }}>≥</option>
+                              <option value="lt" {{ 'selected' if c == 'lt' else '' }}><</option>
+                              <option value="le" {{ 'selected' if c == 'le' else '' }}>≤</option>
+                              <option value="eq" {{ 'selected' if c == 'eq' else '' }}>=</option>
+                              <option value="ne" {{ 'selected' if c == 'ne' else '' }}>≠</option>
+                            {% elif raw_type == 'bool' %}
+                              <option value="eq" {{ 'selected' if c == 'eq' else '' }}>=</option>
+                              <option value="ne" {{ 'selected' if c == 'ne' else '' }}>≠</option>
+                            {% else %}
+                              <option value="contains" {{ 'selected' if c == 'contains' else '' }}>∋</option>
+                              <option value="eq" {{ 'selected' if c == 'eq' else '' }}>=</option>
+                              <option value="ne" {{ 'selected' if c == 'ne' else '' }}>≠</option>
+                            {% endif %}
+                          </select>
+
+                          {% if raw_type == 'number' %}
+                            <input type="text"
+                                  name="value_num"
+                                  value="{{ default_val }}"
+                                  class="pretty-input threshold"
+                                  inputmode="decimal"
+                                  oninput="enforceNumericOrDash(this)"
+                                  onchange="autoSave(this.form)">
+                          {% elif raw_type == 'bool' %}
+                            <select name="value_bool"
+                                    class="pretty-select"
+                                    onchange="autoSave(this.form)">
+                              <option value="1" {{ 'selected' if default_val == '1' else '' }}>Actif</option>
+                              <option value="0" {{ 'selected' if default_val == '0' else '' }}>Inactif</option>
+                            </select>
+                          {% else %}
+                            <input type="text"
+                                  name="value_str"
+                                  value="{{ default_val }}"
+                                  class="pretty-input threshold"
+                                  onchange="autoSave(this.form)">
+                          {% endif %}
+
+                          {% if not th_exists %}
+                            <button type="button"
+                                    class="pretty-btn define-btn"
+                                    onclick="applySuggestedThreshold(this.form)"
+                                    {% if not has_last %}disabled{% endif %}>
+                              Définir
+                            </button>
+                          {% endif %}
+                        </div>
+                      </div>
+                    </form>
+                  </div>
+
+                {% endfor %}
+              </div>
+            </section>
+          {% endif %}
+        {% endfor %}
+
+        {# =====================================================
+           2) Groupe misc (TOUJOURS en dernier)
+           ===================================================== #}
+        {% if ns.misc_group %}
+          <section class="metric-group" data-group="misc">
+            <h4 class="metric-group-title">MISC</h4>
+
+            <p class="no-results group-no-results" style="display:none;">Aucune métrique</p>
+            
+            <div class="grid">
+              {% for metric in ns.misc_group.list %}
+
+                {# =========================
+                  Pré-calculs template
+                  (identiques aux autres groupes)
+                  ========================= #}
+                {% set last = metric.last_sample %}
+                {% set has_last = last is not none %}
+                {% set th = metric.default_threshold %}
+                {% set th_exists = th is not none %}
+                {% set last_ts = last.ts_epoch if has_last else none %}
+
+                {% set raw_type =
+                  'number' if has_last and last.num_value is not none else
+                  'bool'   if has_last and last.bool_value is not none else
+                  'string' if has_last and last.str_value is not none else
+                  'none'
+                %}
+
+                {% set c = (th.condition if th_exists and th.condition else metric.default_condition) %}
+                {% if not c %}
+                  {% set c = 'gt' if raw_type == 'number' else 'eq' %}
+                {% endif %}
+
+                {% if raw_type == 'number' %}
+                  {% set default_val =
+                    (th.value_num if th_exists and th.value_num is not none
+                    else (last.num_value if has_last else '')) %}
+                {% elif raw_type == 'bool' %}
+                  {% set default_val =
+                    ('1' if (th_exists and th.value_bool)
+                    else '0' if (th_exists and th.value_bool is not none and not th.value_bool)
+                    else ('1' if (has_last and last.bool_value) else '0')) %}
+                {% else %}
+                  {% set default_val =
+                    (th.value_str if th_exists and th.value_str is not none
+                    else (last.str_value if has_last else '')) %}
+                {% endif %}
+
+                {% set is_no_data = (metric.status == 'NO_DATA') %}
+                {% set is_breach = (metric.is_firing | default(false)) %}
+                {% set is_critical = is_no_data or is_breach %}
+
+                <div class="card metric-card {{ 'critical' if is_critical else '' }} {{ 'inactive' if not metric.is_alerting_enabled }}"
+                    data-search="{{ metric.name }}"
+                    data-suggested="{{ '1' if metric.is_suggested_critical else '0' }}"
+                    data-no-data="{{ '1' if is_no_data else '0' }}"
+                    data-breach="{{ '1' if is_breach else '0' }}"
+                    data-group="{{ metric.group_name }}"
+                    data-raw-type="{{ raw_type }}"
+                    data-raw-num="{{ last.num_value if has_last else '' }}"
+                    data-raw-bool="{{ '1' if has_last and last.bool_value else '0' }}"
+                    data-raw-str="{{ last.str_value if has_last else '' }}">
+
+                  <!-- Header -->
+                  <div class="card-header">
+                    <div class="card-label-row">
+                      <span class="info-icon"
+                            data-tooltip="{{ metric.description | default('') }}">i</span>
+
+                      {% if metric.is_suggested_critical %}
+                        <span class="suggested">★</span>
+                      {% endif %}
+
+                      <span class="metric-label" title="{{ metric.name }}">
+                        {{ metric.name }}
+                      </span>
+
+                      <!-- Toggle Alerte -->
+                      <form method="post"
+                            action="/webapi/metrics/{{ metric.id }}/alerting"
+                            data-endpoint="alerting"
+                            data-metric-id="{{ metric.id }}"
+                            class="threshold-form">
+                        <label class="switch small-switch">
+                          <input type="checkbox"
+                                name="alert_enabled"
+                                value="1"
+                                {% if metric.is_alerting_enabled %}checked{% endif %}
+                                onchange="autoSave(this.form)">
+                          <span class="slider"></span>
+                        </label>
+                      </form>
+                    </div>
+                  </div>
+
+                  <!-- Dernière valeur + âge -->
+                  <div class="metric-last-value">
+                    {% if has_last %}
+                      {{ last.num_value
+                        if raw_type=='number'
+                        else ('Actif' if last.bool_value else 'Inactif')
+                        if raw_type=='bool'
+                        else last.str_value }}
+
+                      {% if last_ts %}
+                        <span class="meta-sep">•</span>
+                        <span class="nm-metric-age" data-age="{{ last.age_sec }}">
+                          il y a {{ last.age_human }}
+                        </span>
+                      {% endif %}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </div>
+
+                  <!-- Meta -->
+                  <div class="metric-meta">
+                    {% if metric.is_alerting_enabled %}
+                      <span class="pill state-on">Alerte 🔔</span>
+                    {% else %}
+                      <span class="pill state-off">Alerte 🔕</span>
+                    {% endif %}
+
+                    <span class="meta-sep">•</span>
+                    {% if metric.status == 'NO_DATA' %}
+                      <span class="pill no-data data-status">NO DATA</span>
+                    {% else %}
+                      <span class="pill data-ok data-status">DATA OK</span>
+                    {% endif %}
+
+                    {% if not th_exists %}
+                      <span class="meta-sep">•</span>
+                      {% if metric.is_alerting_enabled %}
+                        <span class="pill warning threshold-undefined">À définir</span>
+                      {% else %}
+                        <span class="pill state-off threshold-undefined">Non défini</span>
+                      {% endif %}
+                    {% endif %}
+                  </div>
+
+                  <!-- Édition du seuil -->
+                  <form method="post"
+                        action="/webapi/metrics/{{ metric.id }}/thresholds/default"
+                        data-endpoint="threshold"
+                        data-metric-id="{{ metric.id }}"
+                        class="threshold-form editor"
+                        data-threshold-exists="{{ '1' if th_exists else '0' }}">
+
+                    <div class="threshold-row">
+                      <span class="label-fixed-width">Alerter si</span>
+
+                      <div class="threshold-editor">
+                        <select name="comparison"
+                                class="pretty-select"
+                                onchange="autoSave(this.form)">
+                          {% if raw_type == 'number' %}
+                            <option value="gt" {{ 'selected' if c == 'gt' else '' }}>></option>
+                            <option value="ge" {{ 'selected' if c == 'ge' else '' }}>≥</option>
+                            <option value="lt" {{ 'selected' if c == 'lt' else '' }}><</option>
+                            <option value="le" {{ 'selected' if c == 'le' else '' }}>≤</option>
+                            <option value="eq" {{ 'selected' if c == 'eq' else '' }}>=</option>
+                            <option value="ne" {{ 'selected' if c == 'ne' else '' }}>≠</option>
+                          {% elif raw_type == 'bool' %}
+                            <option value="eq" {{ 'selected' if c == 'eq' else '' }}>=</option>
+                            <option value="ne" {{ 'selected' if c == 'ne' else '' }}>≠</option>
+                          {% else %}
+                            <option value="contains" {{ 'selected' if c == 'contains' else '' }}>∋</option>
+                            <option value="eq" {{ 'selected' if c == 'eq' else '' }}>=</option>
+                            <option value="ne" {{ 'selected' if c == 'ne' else '' }}>≠</option>
+                          {% endif %}
+                        </select>
+
+                        {% if raw_type == 'number' %}
+                          <input type="text"
+                                name="value_num"
+                                value="{{ default_val }}"
+                                class="pretty-input threshold"
+                                inputmode="decimal"
+                                oninput="enforceNumericOrDash(this)"
+                                onchange="autoSave(this.form)">
+                        {% elif raw_type == 'bool' %}
+                          <select name="value_bool"
+                                  class="pretty-select"
+                                  onchange="autoSave(this.form)">
+                            <option value="1" {{ 'selected' if default_val == '1' else '' }}>Actif</option>
+                            <option value="0" {{ 'selected' if default_val == '0' else '' }}>Inactif</option>
+                          </select>
+                        {% else %}
+                          <input type="text"
+                                name="value_str"
+                                value="{{ default_val }}"
+                                class="pretty-input threshold"
+                                onchange="autoSave(this.form)">
+                        {% endif %}
+
+                        {% if not th_exists %}
+                          <button type="button"
+                                  class="pretty-btn define-btn"
+                                  onclick="applySuggestedThreshold(this.form)"
+                                  {% if not has_last %}disabled{% endif %}>
+                            Définir
+                          </button>
+                        {% endif %}
+                      </div>
+                    </div>
+                  </form>
+                </div>
+
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+      </div>
+
+      <p id="noMetricsFound" class="no-results">Aucune métrique trouvée.</p>
+
+      {# =====================================================
+         SERVICES
+         - à placer APRÈS misc, donc ici.
+         - tu as déjà filterMetrics() qui gère .service-card / #noServicesFound.
+         - ici je laisse uniquement le "slot" (tu peux y mettre ton rendu actuel).
+      ====================================================== #}
+      {# 
+      <h3>Services</h3>
+      <div class="grid" id="servicesGrid">
+        {% for service in services %}
+          <div class="card service-card"
+               data-search="{{ service.name }}">
+            ...
+          </div>
+        {% endfor %}
+      </div>
+      <p id="noServicesFound" class="no-results">Aucun service trouvé.</p>
+      #}
+
+    </main>
+  </div>
+</section>

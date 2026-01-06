@@ -21,5 +21,7 @@ class Machine(Base):
     hostname: Mapped[str] = mapped_column(String(255), index=True)
     os_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     os_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    fingerprint: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     last_seen: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     registered_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=lambda: dt.datetime.now(dt.timezone.utc))

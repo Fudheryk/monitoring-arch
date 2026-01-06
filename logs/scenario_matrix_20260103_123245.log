@@ -1,0 +1,175 @@
+
+################################################################################
+#  SCÉNARIO MATRICE ALERTES / NO-DATA (cpu.usage_percent + memory.usage_percent)
+#  Machine : debian-dev
+#  Client  : Dev
+#  Fingerprint : f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1
+################################################################################
+
+################################################################################
+#  SCÉNARIO : 0 - Configuration initiale (SETUP)
+################################################################################
+
+🔧 Configuration initiale de la machine et des seuils...
+
+################################################################################
+INGEST [setup-initial] → http://localhost:8000/api/v1/ingest/metrics
+################################################################################
+Payload:
+{
+  "metadata": {
+    "generator": "scenario-matrix-script",
+    "version": "0.1",
+    "schema_version": "1.0",
+    "key": "dev-apikey-123"
+  },
+  "machine": {
+    "hostname": "debian-dev",
+    "os": "linux",
+    "fingerprint": "f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1"
+  },
+  "metrics": [
+    {
+      "name": "cpu.usage_percent",
+      "value": 20
+    },
+    {
+      "name": "memory.usage_percent",
+      "value": 30
+    }
+  ]
+}
+HTTP 202
+{
+  "status": "accepted",
+  "ingest_id": "20260103_123245_fc882032:setup-initial"
+}
+[CHECK OK]   Ingestion 'setup-initial'
+
+--------------------------------------------------------------------------------
+⏱  Attente 30s pour: création des metric_instances
+--------------------------------------------------------------------------------
+  ... 30 s restantes
+  ... 20 s restantes
+  ... 10 s restantes
+⏱  Fin de l'attente.
+
+
+🔧 ACTIVATION DE L'ALERTING SUR LES MÉTRIQUES
+
+================================================================================
+>> CMD: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -c UPDATE metric_instances SET is_alerting_enabled = true WHERE machine_id = ( SELECT id FROM machines WHERE hostname = 'debian-dev'   AND fingerprint = 'f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1'   AND client_id = (SELECT id FROM clients WHERE name = 'Dev') );
+================================================================================
+UPDATE 2
+[CHECK OK]   Commande: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -c UPDATE metric_instances SET is_alerting_enabled = true WHERE machine_id = ( SELECT id FROM machines WHERE hostname = 'debian-dev'   AND fingerprint = 'f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1'   AND client_id = (SELECT id FROM clients WHERE name = 'Dev') ); (exit_code=0)
+
+🔧 CRÉATION DU SEUIL POUR cpu.usage_percent
+
+================================================================================
+>> CMD: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -t -A -c SELECT id FROM metric_instances WHERE machine_id = ( SELECT id FROM machines WHERE hostname = 'debian-dev'   AND fingerprint = 'f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1'   AND client_id = (SELECT id FROM clients WHERE name = 'Dev') )   AND name_effective = 'cpu.usage_percent';
+================================================================================
+e59088f9-1dfa-4abf-b73e-861cb5e36696
+[CHECK OK]   Commande: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -t -A -c SELECT id FROM metric_instances WHERE machine_id = ( SELECT id FROM machines WHERE hostname = 'debian-dev'   AND fingerprint = 'f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1'   AND client_id = (SELECT id FROM clients WHERE name = 'Dev') )   AND name_effective = 'cpu.usage_percent'; (exit_code=0)
+
+================================================================================
+>> CMD: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -t -A -c SELECT COUNT(*) FROM thresholds_new WHERE metric_instance_id = 'e59088f9-1dfa-4abf-b73e-861cb5e36696' AND name = 'default';
+================================================================================
+0
+[CHECK OK]   Commande: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -t -A -c SELECT COUNT(*) FROM thresholds_new WHERE metric_instance_id = 'e59088f9-1dfa-4abf-b73e-861cb5e36696' AND name = 'default'; (exit_code=0)
+ℹ️  Création d'un nouveau seuil DEFAULT pour cpu.usage_percent...
+
+================================================================================
+>> CMD: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -c INSERT INTO thresholds_new (     id, metric_instance_id, name, condition, value_num,     severity, is_active, consecutive_breaches, created_at, updated_at ) VALUES (     gen_random_uuid(),     'e59088f9-1dfa-4abf-b73e-861cb5e36696',     'default',     'gt',     80.0,     'warning',     true,     1,     NOW(),     NOW() );
+================================================================================
+INSERT 0 1
+[CHECK OK]   Commande: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -c INSERT INTO thresholds_new (     id, metric_instance_id, name, condition, value_num,     severity, is_active, consecutive_breaches, created_at, updated_at ) VALUES (     gen_random_uuid(),     'e59088f9-1dfa-4abf-b73e-861cb5e36696',     'default',     'gt',     80.0,     'warning',     true,     1,     NOW(),     NOW() ); (exit_code=0)
+[CHECK OK]   Configuration seuil DEFAULT cpu.usage_percent
+
+🔧 CRÉATION DU SEUIL POUR memory.usage_percent
+
+================================================================================
+>> CMD: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -t -A -c SELECT id FROM metric_instances WHERE machine_id = ( SELECT id FROM machines WHERE hostname = 'debian-dev'   AND fingerprint = 'f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1'   AND client_id = (SELECT id FROM clients WHERE name = 'Dev') )   AND name_effective = 'memory.usage_percent';
+================================================================================
+c691e861-e506-42d5-aa96-d6c69bd324ea
+[CHECK OK]   Commande: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -t -A -c SELECT id FROM metric_instances WHERE machine_id = ( SELECT id FROM machines WHERE hostname = 'debian-dev'   AND fingerprint = 'f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1'   AND client_id = (SELECT id FROM clients WHERE name = 'Dev') )   AND name_effective = 'memory.usage_percent'; (exit_code=0)
+
+================================================================================
+>> CMD: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -t -A -c SELECT COUNT(*) FROM thresholds_new WHERE metric_instance_id = 'c691e861-e506-42d5-aa96-d6c69bd324ea' AND name = 'default';
+================================================================================
+0
+[CHECK OK]   Commande: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -t -A -c SELECT COUNT(*) FROM thresholds_new WHERE metric_instance_id = 'c691e861-e506-42d5-aa96-d6c69bd324ea' AND name = 'default'; (exit_code=0)
+ℹ️  Création d'un nouveau seuil DEFAULT pour memory.usage_percent...
+
+================================================================================
+>> CMD: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -c INSERT INTO thresholds_new (     id, metric_instance_id, name, condition, value_num,     severity, is_active, consecutive_breaches, created_at, updated_at ) VALUES (     gen_random_uuid(),     'c691e861-e506-42d5-aa96-d6c69bd324ea',     'default',     'gt',     85.0,     'warning',     true,     1,     NOW(),     NOW() );
+================================================================================
+INSERT 0 1
+[CHECK OK]   Commande: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -c INSERT INTO thresholds_new (     id, metric_instance_id, name, condition, value_num,     severity, is_active, consecutive_breaches, created_at, updated_at ) VALUES (     gen_random_uuid(),     'c691e861-e506-42d5-aa96-d6c69bd324ea',     'default',     'gt',     85.0,     'warning',     true,     1,     NOW(),     NOW() ); (exit_code=0)
+[CHECK OK]   Configuration seuil DEFAULT memory.usage_percent
+
+📊 ÉTAT DES METRICS
+
+================================================================================
+>> CMD: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -c SELECT id, machine_id, name_effective, is_alerting_enabled, needs_threshold,        is_paused, last_value, updated_at FROM metric_instances WHERE machine_id = ( SELECT id FROM machines WHERE hostname = 'debian-dev'   AND fingerprint = 'f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1'   AND client_id = (SELECT id FROM clients WHERE name = 'Dev') ) ORDER BY name_effective;
+================================================================================
+                  id                  |              machine_id              |    name_effective    | is_alerting_enabled | needs_threshold | is_paused | last_value |       updated_at       
+--------------------------------------+--------------------------------------+----------------------+---------------------+-----------------+-----------+------------+------------------------
+ e59088f9-1dfa-4abf-b73e-861cb5e36696 | 6414a1e2-c3b1-4c1a-8935-760c523f67bf | cpu.usage_percent    | t                   | t               | f         | 20.0       | 2026-01-03 11:32:46+00
+ c691e861-e506-42d5-aa96-d6c69bd324ea | 6414a1e2-c3b1-4c1a-8935-760c523f67bf | memory.usage_percent | t                   | t               | f         | 30.0       | 2026-01-03 11:32:46+00
+(2 rows)
+[CHECK OK]   Commande: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -c SELECT id, machine_id, name_effective, is_alerting_enabled, needs_threshold,        is_paused, last_value, updated_at FROM metric_instances WHERE machine_id = ( SELECT id FROM machines WHERE hostname = 'debian-dev'   AND fingerprint = 'f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1'   AND client_id = (SELECT id FROM clients WHERE name = 'Dev') ) ORDER BY name_effective; (exit_code=0)
+
+⚙️  SEUILS CONFIGURÉS
+
+================================================================================
+>> CMD: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -c SELECT t.id, mi.name_effective, t.name, t.condition, t.value_num,        t.severity, t.is_active, t.created_at FROM thresholds_new t JOIN metric_instances mi ON mi.id = t.metric_instance_id WHERE mi.machine_id = ( SELECT id FROM machines WHERE hostname = 'debian-dev'   AND fingerprint = 'f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1'   AND client_id = (SELECT id FROM clients WHERE name = 'Dev') ) ORDER BY mi.name_effective, t.name;
+================================================================================
+                  id                  |    name_effective    |  name   | condition | value_num | severity | is_active |          created_at           
+--------------------------------------+----------------------+---------+-----------+-----------+----------+-----------+-------------------------------
+ 2bf7c8a9-3ae6-4926-a11b-691bc9e627a0 | cpu.usage_percent    | default | gt        |        80 | warning  | t         | 2026-01-03 11:33:18.147364+00
+ a8dc06de-94b4-4177-ad61-a4a5bf3bc615 | memory.usage_percent | default | gt        |        85 | warning  | t         | 2026-01-03 11:33:19.57238+00
+(2 rows)
+[CHECK OK]   Commande: docker compose -f docker/docker-compose.yml exec -T db psql -U postgres -d monitoring -c SELECT t.id, mi.name_effective, t.name, t.condition, t.value_num,        t.severity, t.is_active, t.created_at FROM thresholds_new t JOIN metric_instances mi ON mi.id = t.metric_instance_id WHERE mi.machine_id = ( SELECT id FROM machines WHERE hostname = 'debian-dev'   AND fingerprint = 'f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1'   AND client_id = (SELECT id FROM clients WHERE name = 'Dev') ) ORDER BY mi.name_effective, t.name; (exit_code=0)
+
+>>> Résultat du scénario '0 - Configuration initiale (SETUP)': SUCCESS ✅
+
+
+################################################################################
+#  SCÉNARIO : 1 - Onboarding CPU
+################################################################################
+
+################################################################################
+INGEST [cpu-onboarding-1] → http://localhost:8000/api/v1/ingest/metrics
+################################################################################
+Payload:
+{
+  "metadata": {
+    "generator": "scenario-matrix-script",
+    "version": "0.1",
+    "schema_version": "1.0",
+    "key": "dev-apikey-123"
+  },
+  "machine": {
+    "hostname": "debian-dev",
+    "os": "linux",
+    "fingerprint": "f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1"
+  },
+  "metrics": [
+    {
+      "name": "cpu.usage_percent",
+      "value": 42
+    }
+  ]
+}
+HTTP 202
+{
+  "status": "accepted",
+  "ingest_id": "20260103_123245_fc882032:cpu-onboarding-1"
+}
+[CHECK OK]   Ingestion 'cpu-onboarding-1'
+
+--------------------------------------------------------------------------------
+⏱  Attente 60s pour: laisser l'ingestion être traitée
+--------------------------------------------------------------------------------
+  ... 60 s restantes
+  ... 50 s restantes

@@ -1,0 +1,159 @@
+<section id="events">
+  <h2>📜 Historique des événements</h2>
+
+  {% if events and events|length > 0 %}
+    <div class="events-controls">
+      <div class="events-summary">
+        <span id="events-total">{{ events|length }} évènement(s)</span> - 
+        <span id="events-visible">{{ events|length }} résultat(s)</span>
+      </div>
+
+      <div class="events-filter">
+        <label for="events-kind-filter">Type :</label>
+        <select id="events-kind-filter">
+          <option value="all" selected>Tous</option>
+          <option value="incident">Incidents</option>
+          <option value="notification">Notifications</option>
+        </select>
+
+        <label for="events-status-filter">Statut :</label>
+        <select id="events-status-filter">
+          <option value="all" selected>Tous</option>
+
+          <!-- Incidents -->
+          <option value="incident_open">Incident ouvert</option>
+          <option value="incident_resolved">Incident résolu</option>
+
+          <!-- Notifications (severity) -->
+          <option value="notif_info">Info</option>
+          <option value="notif_warning">Warning</option>
+          <option value="notif_error">Erreur</option>
+          <option value="notif_critical">Critique</option>
+        </select>
+      </div>
+
+      <div class="events-search">
+        <input
+          id="events-search"
+          type="search"
+          placeholder="Rechercher dans les événements…"
+          class="pretty-input events-search-input"
+          >
+      </div>
+
+      <div class="events-page-size">
+        <label for="events-page-size-select">Afficher :</label>
+        <select id="events-page-size-select">
+          <option value="20" selected>20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="200">200</option>
+          <option value="0">Tout</option>
+        </select>
+        <span>par page</span>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 1rem;">
+      <table class="events-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Détail</th>
+            <th>Statut</th>
+          </tr>
+        </thead>
+        <tbody id="events-tbody">
+          {% for ev in events %}
+          <tr class="event-row"
+              data-index="{{ loop.index0 }}"
+              data-kind="{{ ev.kind }}"
+              data-provider="{{ ev.provider if ev.kind == 'notification' else '' }}"
+              data-status="{{ ev.status }}"
+              data-severity="{{ ev.severity if ev.kind == 'notification' else '' }}">
+            <td class="ev-date">
+            {# ISO complet en data-attr si un jour tu veux le JS #}
+                <span class="ev-date-full" data-ts="{{ ev.timestamp }}">
+                    {{ ev.timestamp[:10] }} {{ ev.timestamp[11:19] }}
+                </span>
+                <span class="ev-date-short">
+                    {{ ev.timestamp[:10] }}
+                </span>
+            </td>
+            <td class="ev-kind">
+            {% if ev.kind == "incident" %}
+                <span class="ev-icon">🔥</span>
+                <span class="ev-label">Incident</span>
+            {% else %}
+                <span class="ev-icon">📣</span>
+                <span class="ev-label">Notif. ({{ ev.provider }})</span>
+            {% endif %}
+            </td>
+            <td class="ev-main">
+              {% if ev.kind == "incident" %}
+                <div class="ev-title">
+                  <strong>{{ ev.title }}</strong>
+                </div>
+                <div class="ev-description muted">
+                  Ouvert le {{ ev.timestamp[:10] }} {{ ev.timestamp[11:19] }}
+                  {% if ev.resolved_at %}
+                    → Résolu le {{ ev.resolved_at[:10] }} {{ ev.resolved_at[11:19] }}
+                    {% if ev.duration %}
+                      — Durée : {{ ev.duration }}
+                    {% endif %}
+                  {% elif ev.age %}
+                    — En cours : {{ ev.age }}
+                  {% endif %}
+                </div>
+                {% if ev.description %}
+                  <div class="ev-description muted">{{ ev.description }}</div>
+                {% endif %}
+              {% else %}
+                <div class="ev-title">
+                  <strong>{{ ev.recipient }}</strong>
+                </div>
+                {% if ev.message %}
+                  <div class="ev-description muted">
+                    {{ ev.message[:200] }}{% if ev.message|length > 200 %}…{% endif %}
+                  </div>
+                {% endif %}
+              {% endif %}
+            </td>
+
+            <td class="ev-status">
+              {% if ev.kind == "incident" %}
+                {% if ev.status == "ouvert" %}
+                    <span class="badge badge-open">OUVERT</span>
+                {% elif ev.status == "resolu" %}
+                    <span class="badge badge-resolved">RESOLU</span>
+                {% endif %}
+              {% else %}
+                {% if ev.status == "success" %}
+                    <span class="badge badge-success">ENVOYÉ</span>
+                {% elif ev.status == "failed" %}
+                    <span class="badge badge-error">ÉCHEC</span>
+                {% elif ev.status and ev.status.startswith("skipped") %}
+                    <span class="badge badge-warning">IGNORÉ</span>
+                {% else %}
+                    <span class="badge badge-warning">{{ (ev.status or "INCONNU")|upper }}</span>
+                {% endif %}
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="events-pagination" id="events-pagination">
+      <button type="button" id="events-prev">◀ Précédent</button>
+      <span id="events-page-info">Page 1</span>
+      <button type="button" id="events-next">Suivant ▶</button>
+    </div>
+  {% else %}
+    <div class="card">
+      <div class="muted">Aucun évènement pour le moment.</div>
+    </div>
+  {% endif %}
+</section>

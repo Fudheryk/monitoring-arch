@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="fr">
+{% include "fragments/_head.html" %}
+<body>
+  <div class="page-container">
+    <nav class="navbar">
+      <div class="nav-left">
+        <button type="button" onclick="loadView('sites')"><span class="emoji">🌐</span> Sites</button>
+        <button type="button" onclick="loadView('machines')"><span class="emoji">🖥️</span> Serveurs</button>
+        <button type="button" onclick="loadView('events')"><span class="emoji">🧾</span> Evènements</button>
+        <button type="button" onclick="loadView('settings')"><span class="emoji">⚙️</span> Configuration</button>
+      </div>
+      <div class="nav-right">
+        <form method="post" action="{{ request.app.url_path_for('logout') }}">
+          <button type="submit" class="logout-btn">Se déconnecter</button>
+        </form>
+      </div>
+    </nav>
+
+    <header>
+      <h1>NeonMonitor</h1>
+      {% if user %}
+        <p class="subtitle"><strong>{{ user.email }}</strong></p>
+      {% endif %}
+    </header>
+
+    <main>
+      <div id="content"><!-- Contenu dynamique chargé via fetch() --></div>
+    </main>
+
+    {% include "fragments/_footer.html" %}
+  </div>
+</body>
+</html>

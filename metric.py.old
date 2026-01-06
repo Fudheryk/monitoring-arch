@@ -1,0 +1,121 @@
+from __future__ import annotations
+"""server/app/infrastructure/persistence/database/models/metric.py
+~~~~~~~~~~~~~~~~~~~~~~~~
+Modèle SQLAlchemy pour la table `metrics`.
+"""
+
+import uuid
+import datetime as dt
+
+from sqlalchemy import (
+    Boolean,
+    ForeignKey,
+    String,
+    Text,
+    DateTime,
+    Enum as SAEnum,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.infrastructure.persistence.database.base import Base
+
+
+def _utcnow() -> dt.datetime:
+    """Helper UTC (default + onupdate)."""
+    return dt.datetime.now(dt.timezone.utc)
+
+
+class Metric(Base):
+    __tablename__ = "metrics"
+
+    # ----------------------------------------------------------------------
+    # Identité & relation machine
+    # ----------------------------------------------------------------------
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    machine_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("machines.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+
+    # ----------------------------------------------------------------------
+    # Définition de la métrique
+    # ----------------------------------------------------------------------
+    # ex: "security.ssh_connections", "docker.containers_running"
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # Doit correspondre à ENUM('numeric','boolean','string') défini dans la migration
+    type: Mapped[str] = mapped_column(
+        SAEnum("numeric", "boolean", "string", name="metric_type", create_type=False),
+        nullable=False,
+    )
+
+    unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # "system", "security", "docker", "services", ...
+    group_name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Provenance
+    vendor: Mapped[str] = mapped_column(
+        String(100), 
+        nullable=False,
+        default="builtin",
+    )
+
+    # Baseline éventuelle (stockée en texte, interprétée côté domaine/UI)
+    baseline_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ----------------------------------------------------------------------
+    # Flags d’onboarding / criticité
+    # ----------------------------------------------------------------------
+    # issu de is_critical dans le payload d'origine → sert à pré-suggérer
+    # des métriques importantes dans l’UI.
+    is_suggested_critical: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    # ----------------------------------------------------------------------
+    # Alerting & config
+    # ----------------------------------------------------------------------
+    # Par défaut à FALSE dans le schéma (l'utilisateur doit activer l'alerting)
+    is_alerting_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    needs_threshold: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    # Pause métier : on ingère toujours les samples, mais aucun alerting
+    is_paused: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    # ----------------------------------------------------------------------
+    # Dernière valeur & timestamps
+    # ----------------------------------------------------------------------
+    last_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        onupdate=_utcnow,
+    )

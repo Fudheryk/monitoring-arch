@@ -43,7 +43,7 @@ def test_incident_lifecycle_contract():
     _skip_if_db_unreachable()
 
     # ── Imports "sensibles" APRES le pré-check & conftest (DATABASE_URL OK) ────
-    from app.infrastructure.persistence.database.session import get_sync_session  # type: ignore
+    from app.infrastructure.persistence.database.session import open_session  # type: ignore
     from app.infrastructure.persistence.database.models.incident import Incident  # type: ignore
     from app.infrastructure.persistence.database.models.http_target import HttpTarget  # type: ignore
 
@@ -58,7 +58,7 @@ def test_incident_lifecycle_contract():
     except Exception:
         pytest.skip("Repositories introuvables dans ce build")
 
-    with get_sync_session() as session:
+    with open_session() as session:
         # ── Instanciations souples (avec ou sans session selon la signature) ───
         try:
             targets = HttpTargetRepository(session)  # type: ignore[call-arg]

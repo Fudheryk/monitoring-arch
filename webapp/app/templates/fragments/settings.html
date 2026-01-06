@@ -1,0 +1,82 @@
+<section id="settings">
+  <h2>⚙️ Paramètres des alertes</h2>
+  <div class="grid" style="max-width: 600px;">
+    <div class="card" style="padding: 2rem;">
+      <form id="alert-config-form" novalidate>
+
+        <div class="form-group">
+          <label for="alert_email">📧 Adresse email :</label>
+          <input type="email" id="alert_email" name="alert_email"
+                 placeholder="exemple@domaine.com"
+                 class="pretty-input"
+                 value="{{ alert_config.email }}"
+                 onblur="validateEmailField(this)">
+          <div id="email-error" class="error-msg" style="display: none;">
+            Adresse email invalide
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="alert_slack">💬 Webhook Slack :</label>
+          <input type="url" id="alert_slack" name="alert_slack"
+                 placeholder="https://hooks.slack.com/services/xxxxxxxxx/yyyyyyy/zzzzzzzz"
+                 class="pretty-input"
+                 value="{{ alert_config.slack }}"
+                 onblur="validateSlackWebhook(this)">
+          <div id="slack-error" class="error-msg" style="display: none;">
+            Webhook invalide
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="alert_slack_channel_name">#️⃣ Canal Slack (optionnel) :</label>
+          <input type="text" id="alert_slack_channel_name" name="alert_slack_channel_name"
+                 placeholder="#canal"
+                 class="pretty-input"
+                 maxlength="15"
+                 value="{{ alert_config.slack_channel_name or '' }}"
+                 onblur="validateSlackChannel(this)">
+          <div class="muted" style="font-size: 10px;">
+            Si vide, l'interface utilisateur affichera <strong>#canal</strong> par défaut.
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="grace_minutes">⏱ Période de grâce avant notification (minutes) :</label>
+          <input type="number" id="grace_minutes" name="grace_minutes"
+                 class="pretty-input"
+                 min="0" max="120" required
+                 value="{{ alert_config.grace_minutes }}"
+                 onkeydown="restrictToDigits(event)">
+        </div>
+
+        <div class="form-group">
+          <label for="reminder_interval">🔁 Fréquence des rappels (minutes) :</label>
+          <input type="number" id="reminder_interval" name="reminder_interval"
+                 class="pretty-input"
+                 min="5" max="1440"
+                 required
+                 value="{{ alert_config.reminder_interval }}"
+                 onkeydown="restrictToDigits(event)">
+        </div>
+
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 0.5rem;">
+            <input type="checkbox" id="group_alerts" name="group_alerts"
+                   {% if alert_config.group_alerts %}checked{% endif %}>
+            Grouper les alertes
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label style="display: flex; align-items: center; gap: 0.5rem; color:gray">
+            <input type="checkbox" id="suppress_resolution_alert" name="suppress_resolution_alert"
+                   {% if alert_config.suppress_resolution_alert %}checked{% endif %} disabled>
+            [A venir] Ne pas recevoir l’alerte de résolution
+          </label>
+        </div>
+
+      </form>
+    </div>
+  </div>
+</section>

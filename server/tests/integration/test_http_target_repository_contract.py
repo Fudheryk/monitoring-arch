@@ -28,7 +28,7 @@ except Exception:  # pragma: no cover
     from ._dbutils import require_db_or_skip  # type: ignore  # fallback si le package "server" n'est pas visible
 
 
-def _ensure_host_db_url() -> None:
+def _ensure_machine_db_url() -> None:
     """
     Si on n'est pas en conteneur et que DATABASE_URL est absente, force une URL localhost.
     """
@@ -39,7 +39,7 @@ def _ensure_host_db_url() -> None:
 @pytest.mark.timeout(30)
 def test_http_target_repo_crud():
     # 1) Fixe l'ENV très tôt (avant import app.*)
-    _ensure_host_db_url()
+    _ensure_machine_db_url()
 
     # 2) Skip doux si la DB n'est pas joignable depuis l'hôte
     require_db_or_skip()
@@ -62,7 +62,7 @@ def test_http_target_repo_crud():
         session_mod.init_sessionmaker()  # type: ignore[attr-defined]
 
     # 4) Imports dépendants de la session correctement initialisée
-    from app.infrastructure.persistence.database.session import get_sync_session  # type: ignore
+    from app.infrastructure.persistence.database.session import open_session  # type: ignore
     from app.infrastructure.persistence.database.models.http_target import HttpTarget  # type: ignore
 
     # Repo optionnel (selon l'emplacement exact dans le projet)
@@ -77,7 +77,7 @@ def test_http_target_repo_crud():
     if HttpTargetRepository is None:
         pytest.skip("HttpTargetRepository introuvable")
 
-    with get_sync_session() as session:
+    with open_session() as session:
         # Instanciation souple : avec session si demandé, sinon sans
         try:
             repo = HttpTargetRepository(session)  # type: ignore[call-arg]

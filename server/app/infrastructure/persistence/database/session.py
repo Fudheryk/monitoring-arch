@@ -1,55 +1,70 @@
-# server/app/infrastructure/persistence/database/session.py
 from __future__ import annotations
+"""
+/server/app/infrastructure/persistence/database/session.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Init Engine/Session + helpers (compat FastAPI + services).
 
-"""SQLAlchemy engine/session setup + FastAPI dependency."""
+- get_db()       : dépendance FastAPI (yield Session) avec commit/rollback.
+- open_session() : context manager pour services/tests (with ... as s:) idem.
+
+SQLite :
+- StaticPool pour in-memory, check_same_thread=False.
+- Création du schéma si http_targets manquante (tests unitaires sans Alembic).
+"""
 
 import os
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.config import settings
+from app.infrastructure.persistence.database.base import Base  # metadata
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./app.db")
 
 _engine: Engine | None = None
 _SessionLocal: sessionmaker | None = None
 
 
+def _ensure_sqlite_schema(engine: Engine) -> None:
+    """En SQLite, crée le schéma minimal si Alembic n'a pas tourné (ex: tests)."""
+    if engine.url.get_backend_name() != "sqlite":
+        return
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("http_targets"):
+            Base.metadata.create_all(bind=engine)
+    except Exception:
+        Base.metadata.create_all(bind=engine)
+
+
 def init_engine() -> Engine:
-    """
-    Create a singleton SQLAlchemy Engine, with dialect-aware connect_args.
-    - PostgreSQL: pass connect_timeout
-    - SQLite: share in-memory DB across connections (StaticPool), disable same-thread check
-    """
+    """Construit l'Engine (singleton module)."""
     global _engine
     if _engine is not None:
         return _engine
 
-    url = make_url(settings.DATABASE_URL)
-    backend = url.get_backend_name()  # e.g. "postgresql+psycopg", "sqlite"
-    kwargs: dict = dict(future=True, pool_pre_ping=True)
+    url = make_url(DATABASE_URL)
+    kwargs: dict = dict(pool_pre_ping=True, future=True)
     connect_args: dict = {}
-
-    if backend.startswith("postgresql") or backend == "postgres":
-        # psycopg accepts connect_timeout (seconds)
-        connect_args["connect_timeout"] = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
-    elif backend.startswith("sqlite"):
-        # SQLite: special flags; and for in-memory DB, use StaticPool to share connections
+    if url.get_backend_name().startswith("sqlite"):
         connect_args["check_same_thread"] = False
         db_name = (url.database or "").strip()
+        # Partage de connexion pour :memory:
         if db_name in ("", ":memory:"):
             kwargs["poolclass"] = StaticPool
 
-    _engine = create_engine(settings.DATABASE_URL, connect_args=connect_args, **kwargs)
+    _engine = create_engine(DATABASE_URL, connect_args=connect_args, **kwargs)
+    _ensure_sqlite_schema(_engine)
     return _engine
 
 
 def init_sessionmaker() -> sessionmaker:
-    """Create (once) and return the SessionLocal factory."""
+    """Sessionmaker partagé (singleton module)."""
     global _SessionLocal
     if _SessionLocal is None:
         _SessionLocal = sessionmaker(
@@ -61,35 +76,45 @@ def init_sessionmaker() -> sessionmaker:
     return _SessionLocal
 
 
-def _ensure_sessionmaker() -> sessionmaker:
-    sm = init_sessionmaker()
-    assert sm is not None
-    return sm
-
-
 def get_session() -> Session:
-    """Return a new Session (caller is responsible for closing it)."""
-    return _ensure_sessionmaker()()
+    """Nouvelle Session synchrone (à fermer par l’appelant)."""
+    return init_sessionmaker()()
 
+
+# -------- Context manager (services/tests) ------------------------------------
 
 @contextmanager
-def get_sync_session() -> Iterator[Session]:
-    """Context manager: `with get_sync_session() as s:`"""
+def open_session() -> Iterator[Session]:
+    """
+    Usage (services/tests) :
+        with open_session() as s:
+            ...
+    Commit/rollback automatiques.
+    """
     s = get_session()
     try:
         yield s
+        s.commit()
+    except Exception:
+        s.rollback()
+        raise
     finally:
         s.close()
 
 
-# FastAPI dependency (auto-close)
+# -------- Dépendance FastAPI --------------------------------------------------
+
 def get_db() -> Iterator[Session]:
     """
-    Usage:
-        def endpoint(db: Session = Depends(get_db)): ...
+    Usage FastAPI :
+        def endpoint(s: Session = Depends(get_db)): ...
     """
-    db = get_session()
+    s = get_session()
     try:
-        yield db
+        yield s
+        s.commit()
+    except Exception:
+        s.rollback()
+        raise
     finally:
-        db.close()
+        s.close()

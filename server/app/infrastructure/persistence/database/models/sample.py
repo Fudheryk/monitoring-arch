@@ -15,7 +15,7 @@ import datetime as dt
 class Sample(Base):
     __tablename__ = "samples"
 
-    metric_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("metrics.id", ondelete="CASCADE"), primary_key=True)
+    metric_instance_id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("metrics.id", ondelete="CASCADE"), primary_key=True)
     ts: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), primary_key=True, default=lambda: dt.datetime.now(dt.timezone.utc))
     seq: Mapped[int] = mapped_column(Integer, primary_key=True, default=0)
     value_type: Mapped[str] = mapped_column(String(16))  # bool|numeric|string

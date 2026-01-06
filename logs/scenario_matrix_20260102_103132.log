@@ -1,0 +1,52 @@
+
+################################################################################
+#  SCÉNARIO MATRICE ALERTES / NO-DATA (cpu.usage_percent + memory.usage_percent)
+#  Machine : debian-dev
+#  Client  : Dev
+#  Fingerprint : f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1
+################################################################################
+
+################################################################################
+#  SCÉNARIO : 0 - Configuration initiale (SETUP)
+################################################################################
+
+🔧 Configuration initiale de la machine et des seuils...
+
+################################################################################
+INGEST [setup-initial] → http://localhost:8000/api/v1/ingest/metrics
+################################################################################
+Payload:
+{
+  "metadata": {
+    "generator": "scenario-matrix-script",
+    "version": "0.1",
+    "schema_version": "1.0",
+    "key": "dev-apikey-123"
+  },
+  "machine": {
+    "hostname": "debian-dev",
+    "os": "linux",
+    "fingerprint": "f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1"
+  },
+  "metrics": [
+    {
+      "name": "cpu.usage_percent",
+      "value": 20
+    },
+    {
+      "name": "memory.usage_percent",
+      "value": 30
+    }
+  ]
+}
+HTTP 202
+{
+  "status": "accepted",
+  "ingest_id": "20260102_103132_744b4f54:setup-initial"
+}
+[CHECK OK]   Ingestion 'setup-initial'
+
+--------------------------------------------------------------------------------
+⏱  Attente 30s pour: création des metric_instances
+--------------------------------------------------------------------------------
+  ... 30 s restantes
