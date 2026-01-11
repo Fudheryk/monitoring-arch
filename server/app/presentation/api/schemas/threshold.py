@@ -27,6 +27,8 @@ il décrit uniquement la "forme" JSON échangée par l’API.
 from typing import Optional
 from pydantic import BaseModel, Field, AliasChoices, field_validator
 
+from app.domain.policies import normalize_comparison
+
 
 # ---------------------------------------------------------------------------
 # Objets "sortants" (si tu veux typer certaines réponses)
@@ -100,7 +102,7 @@ class CreateDefaultThresholdIn(BaseModel):
     @classmethod
     def _norm_comparison(cls, v: Optional[str]) -> Optional[str]:
         # Normalisation en minuscules sans espaces parasites
-        return v.strip().lower() if isinstance(v, str) else v
+        return normalize_comparison(v)
 
     @field_validator("severity")
     @classmethod

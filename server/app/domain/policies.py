@@ -58,7 +58,7 @@ def match_condition(metric_type: str, condition: str, sample_value: Any, thresho
     - string : {eq,ne,contains,not_contains,regex}
     """
     mtype = _norm_metric_type(metric_type)
-    cond = (condition or "").strip().lower()
+    cond = normalize_comparison(condition) or ""
 
     if mtype == "number":
         try:
@@ -105,3 +105,32 @@ def apply_min_duration(previous_severity: str, since: datetime, now: datetime,
         return desired
     elapsed = (now - since).total_seconds()
     return previous_severity if elapsed < max(0, min_duration_s) else desired
+
+def normalize_comparison(op_in: str | None) -> str | None:
+    """
+    Normalise un opérateur reçu (UI / saisie humaine) vers le standard métier/API.
+    Standard attendu: gt, ge, lt, le, eq, ne, contains, not_contains, regex
+    """
+    if op_in is None:
+        return None
+    s = str(op_in).strip().lower()
+    if s == "":
+        return None
+    aliases = {
+        "gte": "ge",
+        "lte": "le",
+        ">=": "ge",
+        "<=": "le",
+        ">": "gt",
+        "<": "lt",
+        "==": "eq",
+        "!=": "ne",
+        # String ops (UI)
+        "∋": "contains",
+        "∌": "not_contains",
+        "not-contains": "not_contains",
+        "not contains": "not_contains",
+        "ne_contient_pas": "not_contains",
+        "ne contient pas": "not_contains",
+    }
+    return aliases.get(s, s)

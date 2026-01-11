@@ -38,38 +38,11 @@ from app.presentation.api.schemas.threshold import (
     ToggleAlertingIn,
 )
 from app.api.schemas.metric_pause import TogglePauseIn
-from app.domain.policies import _norm_metric_type
+from app.domain.policies import _norm_metric_type, normalize_comparison
 
 
 router = APIRouter(prefix="/metrics")
 
-
-def _normalize_comparison(op: Optional[str]) -> Optional[str]:
-    """
-    P0: Normalise les opérateurs reçus (UI prototype / saisie humaine) vers le standard API.
-    Standard API attendu partout: gt, ge, lt, le, eq, ne, contains, not_contains, regex
-
-    Accepte aussi:
-      - gte/lte  (prototype)
-      - symboles (>=, <=, >, <, ==, !=)
-    """
-    if op is None:
-        return None
-    s = str(op).strip().lower()
-    if s == "":
-        return None
-
-    aliases = {
-        "gte": "ge",
-        "lte": "le",
-        ">=": "ge",
-        "<=": "le",
-        ">": "gt",
-        "<": "lt",
-        "==": "eq",
-        "!=": "ne",
-    }
-    return aliases.get(s, s)
 
 # ============================================================================
 # Helpers internes
@@ -354,10 +327,10 @@ async def upsert_default_threshold(
 
     # Normalisation de type pour la logique de validation
     val_num, val_bool, val_str = payload.value_num, payload.value_bool, payload.value_str
-    cmp_in = _normalize_comparison(payload.comparison)
+    cmp_in = normalize_comparison(payload.comparison)
 
     def _normalize_db_condition(v: Optional[str]) -> Optional[str]:
-        return _normalize_comparison(v)
+        return normalize_comparison(v)
 
     allowed = {
         "number": {"gt", "ge", "lt", "le", "eq", "ne"},
@@ -498,7 +471,7 @@ async def upsert_default_threshold(
         "threshold": {
             "id": str(thr.id),
             "name": thr.name,
-            "condition": _normalize_comparison(thr.condition),
+            "condition": normalize_comparison(thr.condition),
             "value_num": thr.value_num,
             "value_bool": thr.value_bool,
             "value_str": thr.value_str,

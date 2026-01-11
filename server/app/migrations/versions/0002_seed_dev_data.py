@@ -27,12 +27,11 @@ depends_on = None
 BUILTIN_METRICS_SEED = [
     # --- FIREWALL -----------------------------------------------------------
     {
-        "name": "firewall.iptables.rules_count",
+        "name": "iptables.rules_count",
         "type": "numeric",
         "group_name": "firewall",
         "description": (
-            "Nombre de règles dans iptables. Critique si des règles existent, "
-            "car cela indique une configuration du pare-feu."
+            "Nombre total de règles configurées dans iptables."
         ),
         "is_suggested_critical": True,
         "default_condition": "lt",
@@ -40,14 +39,53 @@ BUILTIN_METRICS_SEED = [
         "dynamic_dimension": None,
     },
     {
-        "name": "firewall.iptables.version",
+        "name": "iptables.version",
         "type": "string",
         "group_name": "firewall",
         "description": (
-            "Version d'iptables. Critique car une version obsolète peut avoir "
-            "des failles de sécurité."
+            "Version d'iptables."
         ),
         "is_suggested_critical": True,
+        "default_condition": "ne",
+        "is_dynamic_family": False,
+        "dynamic_dimension": None,
+    },
+    {
+        "name": "firewalld.running",
+        "type": "boolean",
+        "group_name": "firewall",
+        "description": "Indique si firewalld est actif (running).",
+        "is_suggested_critical": True,
+        "default_condition": "ne",
+        "is_dynamic_family": False,
+        "dynamic_dimension": None,
+    },
+    {
+        "name": "firewalld.version",
+        "type": "string",
+        "group_name": "firewall",
+        "description": "Version de firewalld.",
+        "is_suggested_critical": False,
+        "default_condition": "ne",
+        "is_dynamic_family": False,
+        "dynamic_dimension": None,
+    },
+    {
+        "name": "ufw.enabled",
+        "type": "boolean",
+        "group_name": "firewall",
+        "description": "Indique si UFW est activé (Status: active).",
+        "is_suggested_critical": False,
+        "default_condition": "ne",
+        "is_dynamic_family": False,
+        "dynamic_dimension": None,
+    },
+    {
+        "name": "ufw.version",
+        "type": "string",
+        "group_name": "firewall",
+        "description": "Version de UFW.",
+        "is_suggested_critical": False,
         "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
@@ -60,7 +98,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "system",
         "description": "Nom d'hôte du système.",
         "is_suggested_critical": False,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -70,7 +108,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "system",
         "description": "Système d'exploitation (Linux, Windows, etc.).",
         "is_suggested_critical": False,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -80,7 +118,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "system",
         "description": "Version du noyau.",
         "is_suggested_critical": False,
-        "default_condition": "contains",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -90,7 +128,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "system",
         "description": "Version complète du noyau.",
         "is_suggested_critical": False,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -100,7 +138,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "system",
         "description": "Nom complet de la distribution Linux.",
         "is_suggested_critical": False,
-        "default_condition": "contains",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -110,7 +148,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "system",
         "description": "Architecture du système.",
         "is_suggested_critical": False,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -121,7 +159,7 @@ BUILTIN_METRICS_SEED = [
         "description": (
             "Temps écoulé depuis le dernier démarrage du système (en secondes)."
         ),
-        "is_suggested_critical": False,
+        "is_suggested_critical": True,
         "default_condition": "lt",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
@@ -142,7 +180,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "system",
         "description": "Version de Python utilisée sur le système.",
         "is_suggested_critical": False,
-        "default_condition": "contains",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -152,7 +190,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "system",
         "description": "Mémoire totale (en Go).",
         "is_suggested_critical": False,
-        "default_condition": "lt",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -161,7 +199,7 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "system",
         "description": "Mémoire disponible (en Go).",
-        "is_suggested_critical": False,
+        "is_suggested_critical": True,
         "default_condition": "lt",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
@@ -173,7 +211,7 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "updates",
         "description": "Nombre de mises à jour sécurité disponibles via apt.",
-        "is_suggested_critical": False,
+        "is_suggested_critical": True,
         "default_condition": "gt",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
@@ -183,7 +221,7 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "updates",
         "description": "Nombre de mises à jour disponibles via apt.",
-        "is_suggested_critical": False,
+        "is_suggested_critical": True,
         "default_condition": "gt",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
@@ -194,7 +232,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "updates",
         "description": "Version actuelle de apt sur le système.",
         "is_suggested_critical": False,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -203,7 +241,7 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "updates",
         "description": "Nombre de mises à jour disponibles via yum.",
-        "is_suggested_critical": False,
+        "is_suggested_critical": True,
         "default_condition": "gt",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
@@ -214,7 +252,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "updates",
         "description": "Version actuelle de yum sur le système.",
         "is_suggested_critical": False,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -298,7 +336,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "memory",
         "description": "Mémoire totale disponible (bytes).",
         "is_suggested_critical": False,
-        "default_condition": "lt",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -350,7 +388,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "cpu",
         "description": "Nombre de cœurs de processeur.",
         "is_suggested_critical": False,
-        "default_condition": "lt",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -379,7 +417,7 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "system",
         "description": "Charge moyenne du processeur sur 15 minutes.",
-        "is_suggested_critical": False,
+        "is_suggested_critical": True,
         "default_condition": "gt",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
@@ -388,11 +426,11 @@ BUILTIN_METRICS_SEED = [
     # --- RESEAU (global) ---------------------------------------------------
     {
         "name": "network.<iface>.up",
-        "type": "numeric",
+        "type": "boolean",
         "group_name": "network",
-        "description": "Valeur 1 si l'interface réseau <iface> est active (UP), 0 sinon.",
-        "is_suggested_critical": False,
-        "default_condition": "gt",
+        "description": "Valeur Actif si l'interface réseau <iface> est active (UP), Inactif sinon.",
+        "is_suggested_critical": True,
+        "default_condition": "ne",
         "is_dynamic_family": True,
         "dynamic_dimension": "interface",
     },
@@ -520,7 +558,7 @@ BUILTIN_METRICS_SEED = [
             "Capacité totale (en Go) d'une partition pour un point de montage <mountpoint>."
         ),
         "is_suggested_critical": False,
-        "default_condition": "lt",
+        "default_condition": "ne",
         "is_dynamic_family": True,
         "dynamic_dimension": "mountpoint",
     },
@@ -556,7 +594,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "docker",
         "description": "Indique si le démon Docker est en cours d'exécution.",
         "is_suggested_critical": True,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -565,7 +603,7 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "docker",
         "description": (
-            "Nombre total de conteneurs Docker, y compris ceux stoppés."
+            "Nombre total de conteneurs Docker présents sur l’hôte (tous états confondus)."
         ),
         "is_suggested_critical": True,
         "default_condition": "ne",
@@ -580,7 +618,7 @@ BUILTIN_METRICS_SEED = [
             "Nombre de conteneurs Docker actuellement en cours d'exécution."
         ),
         "is_suggested_critical": True,
-        "default_condition": "lt",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -615,11 +653,10 @@ BUILTIN_METRICS_SEED = [
         "type": "boolean",
         "group_name": "database",
         "description": (
-            "Indique si le service MySQL est actif. Critique car MySQL est "
-            "essentiel pour la gestion des bases de données."
+            "État du service MySQL (actif/inactif) sur l’hôte."
         ),
         "is_suggested_critical": True,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -653,7 +690,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "services",
         "description": "Indique si le service systemd <unit> est actif.",
         "is_suggested_critical": False,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": True,
         "dynamic_dimension": "service_name",
     },
@@ -664,8 +701,7 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "logs",
         "description": (
-            "Le nombre d'erreurs dans les logs système. Critique car cela peut "
-            "indiquer des pannes ou des problèmes majeurs."
+            "Le nombre d'erreurs dans les logs système."
         ),
         "is_suggested_critical": True,
         "default_condition": "gt",
@@ -677,8 +713,7 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "logs",
         "description": (
-            "Le nombre d'avertissements dans les logs système. Non critique, "
-            "mais peut signaler des problèmes mineurs."
+            "Le nombre d'avertissements dans les logs système."
         ),
         "is_suggested_critical": False,
         "default_condition": "gt",
@@ -690,8 +725,7 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "logs",
         "description": (
-            "Le nombre d'échecs d'authentification. Critique car cela peut "
-            "indiquer des tentatives d'intrusion."
+            "Le nombre d'échecs d'authentification."
         ),
         "is_suggested_critical": True,
         "default_condition": "gt",
@@ -703,8 +737,7 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "logs",
         "description": (
-            "Le nombre d'erreurs dans les journaux système au cours de la "
-            "dernière heure. Critique si des erreurs sont trouvées."
+            "Le nombre d'erreurs dans les journaux système au cours de la dernière heure."
         ),
         "is_suggested_critical": False,
         "default_condition": "gt",
@@ -719,7 +752,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "scheduled_tasks",
         "description": "Indique si le service cron est disponible.",
         "is_suggested_critical": False,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -739,7 +772,7 @@ BUILTIN_METRICS_SEED = [
         "group_name": "scheduled_tasks",
         "description": "Indique si le service Anacron est disponible.",
         "is_suggested_critical": False,
-        "default_condition": "eq",
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },
@@ -748,8 +781,8 @@ BUILTIN_METRICS_SEED = [
         "type": "numeric",
         "group_name": "scheduled_tasks",
         "description": "Nombre de timers systemd actifs.",
-        "is_suggested_critical": False,
-        "default_condition": "lt",
+        "is_suggested_critical": True,
+        "default_condition": "ne",
         "is_dynamic_family": False,
         "dynamic_dimension": None,
     },  
