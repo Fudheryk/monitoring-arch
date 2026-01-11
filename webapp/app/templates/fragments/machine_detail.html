@@ -21,7 +21,9 @@
         onclick="loadView('machine', '{{ m.id }}')"
         data-machine-id="{{ m.id }}"
         class="machine-button{% if m.id == current_machine.id %} active{% endif %}">
-        {{ m.hostname }}
+        <span class="machine-name" title="{{ m.hostname }}" aria-label="{{ m.hostname }}">
+          {{ m.hostname }}
+        </span>
 
         {# Badge incidents OPEN #}
         {% if (m.open_incidents_count | default(0)) | int > 0 %}
@@ -85,7 +87,7 @@
       {% set grouped = metrics | groupby('group_name') %}
 
       {# Container global (plus une seule .grid, car chaque groupe a sa propre .grid) #}
-      <div id="metricsGrid">
+      <div id="metricsGrid" data-ready="0">
 
         {# =====================================================
            1) Tous les groupes SAUF misc
@@ -101,10 +103,21 @@
               <!-- Titre du groupe en majuscules -->
               <h4 class="metric-group-title">{{ gname | upper | replace('_', ' ') }}</h4>
 
-              <p class="no-results group-no-results" style="display:none;">Aucune métrique</p>
+              <p class="no-results group-no-results">Aucune métrique</p>
 
               <!-- Grille des cards de CE groupe -->
               <div class="grid">
+                <!-- Skeleton loader (visible only while metricsGrid data-ready="0") -->
+                <div class="card metric-card skeleton-card" aria-hidden="true">
+                  <div class="skeleton-line w-60"></div>
+                  <div class="skeleton-line w-40"></div>
+                  <div class="skeleton-line w-80"></div>
+                  <div class="skeleton-row">
+                    <span class="skeleton-pill"></span>
+                    <span class="skeleton-pill"></span>
+                    <span class="skeleton-pill"></span>
+                  </div>
+                </div>
                 {% for metric in g.list %}
 
                   {# =========================
@@ -264,6 +277,7 @@
                               <option value="ne" {{ 'selected' if c == 'ne' else '' }}>≠</option>
                             {% else %}
                               <option value="contains" {{ 'selected' if c == 'contains' else '' }}>∋</option>
+                              <option value="not_contains" {{ 'selected' if c == 'not_contains' else '' }}>∌</option>
                               <option value="eq" {{ 'selected' if c == 'eq' else '' }}>=</option>
                               <option value="ne" {{ 'selected' if c == 'ne' else '' }}>≠</option>
                             {% endif %}
@@ -318,9 +332,20 @@
           <section class="metric-group" data-group="misc">
             <h4 class="metric-group-title">MISC</h4>
 
-            <p class="no-results group-no-results" style="display:none;">Aucune métrique</p>
-            
-            <div class="grid">
+            <p class="no-results group-no-results">Aucune métrique</p>
+
+              <div class="grid">
+                <!-- Skeleton loader (visible only while metricsGrid data-ready="0") -->
+                <div class="card metric-card skeleton-card" aria-hidden="true">
+                  <div class="skeleton-line w-60"></div>
+                  <div class="skeleton-line w-40"></div>
+                  <div class="skeleton-line w-80"></div>
+                  <div class="skeleton-row">
+                    <span class="skeleton-pill"></span>
+                    <span class="skeleton-pill"></span>
+                    <span class="skeleton-pill"></span>
+                  </div>
+                </div>
               {% for metric in ns.misc_group.list %}
 
                 {# =========================
@@ -479,6 +504,7 @@
                             <option value="ne" {{ 'selected' if c == 'ne' else '' }}>≠</option>
                           {% else %}
                             <option value="contains" {{ 'selected' if c == 'contains' else '' }}>∋</option>
+                            <option value="not_contains" {{ 'selected' if c == 'not_contains' else '' }}>∌</option>
                             <option value="eq" {{ 'selected' if c == 'eq' else '' }}>=</option>
                             <option value="ne" {{ 'selected' if c == 'ne' else '' }}>≠</option>
                           {% endif %}

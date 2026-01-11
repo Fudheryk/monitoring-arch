@@ -5,8 +5,12 @@
 function loadView(view, machineId = null) {
   if (window.currentViewFetchCtrl) {
     try { window.currentViewFetchCtrl.abort(); } catch (_) {}
+    // si on enchaîne rapidement, la barre précédente doit se cacher
+    window.TopBar?.abort?.();
   }
   window.currentViewFetchCtrl = new AbortController();
+
+  window.TopBar?.start();
 
   let url = `/fragment/${view}`;
   if (machineId) url = `/fragment/machine/${machineId}`;
@@ -25,22 +29,28 @@ function loadView(view, machineId = null) {
     return r;
   };
 
-  fetch(url, fetchOpts)
-    .then(async (res) => {
+// On encapsule pour pouvoir faire un finally (done/abort) fiable.
+  (async () => {
+    let redirectedToAnotherView = false;
+    try {
+      let res = await fetch(url, fetchOpts);
       if (res.type === "opaqueredirect" || res.status === 0) {
         console.warn("🔐 opaqueredirect/status 0 → redirection /login");
+        window.TopBar?.abort();
         window.location.href = "/login";
         return null;
       }
 
       if (res.status === 303) {
         console.warn("🔐 303 reçu (auth guard) → redirection /login");
+        window.TopBar?.abort();
         window.location.href = "/login";
         return null;
       }
 
       if (res.status === 401 || res.headers.get("X-Auth-Redirect") === "1") {
         console.warn("🔐 401 / X-Auth-Redirect → redirection /login");
+        window.TopBar?.abort();
         window.location.href = "/login";
         return null;
       }
@@ -52,6 +62,7 @@ function loadView(view, machineId = null) {
 
       if (res.redirected && new URL(res.url).pathname === "/login") {
         console.warn("🔐 fetch.redirected vers /login → redirection pleine page");
+        window.TopBar?.abort();
         window.location.href = "/login";
         return null;
       }
@@ -82,6 +93,8 @@ function loadView(view, machineId = null) {
             firstMachineBtn.dataset.machineId || firstMachineBtn.getAttribute("data-machine-id");
           if (firstMachineId) {
             console.log("🔁 Redirection automatique vers machine ID:", firstMachineId);
+            // on ne "done" pas : une nouvelle vue part tout de suite
+            redirectedToAnotherView = true;
             loadView("machine", firstMachineId);
             return null;
           }
@@ -155,13 +168,91 @@ function loadView(view, machineId = null) {
 
       window.scrollTo(0, 0);
       return null;
-    })
-    .catch((error) => {
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        // abort = normal quand on change vite de vue
+        window.TopBar?.abort();
+        return;
+      }
+      window.TopBar?.abort();
       console.error("❌ Erreur lors du chargement de la vue:", error);
       const container = document.getElementById("content");
       if (container) container.innerHTML = "<p>Erreur lors du chargement</p>";
-    });
+    } finally {
+      // Fin “normale” : si on n'a pas relancé une autre vue, on termine la barre.
+      if (!redirectedToAnotherView) window.TopBar?.done();
+    }
+  })();
 }
+
+window.TopBar = (() => {
+  const el = () => document.getElementById("nm-topbar");
+  let timer = null;
+  let progress = 0;
+
+  function start(){
+    const bar = el();
+    if (!bar) return;
+
+    // reset
+    stopTimer();
+    progress = 0;
+    bar.classList.add("loading");
+    bar.style.width = "0%";
+
+    // petite latence pour éviter flicker si réponse très rapide
+    requestAnimationFrame(() => {
+      progress = 10;
+      bar.style.width = progress + "%";
+    });
+
+    // fake progress (monte doucement jusqu'à ~90%)
+    timer = setInterval(() => {
+      if (!window.currentViewFetchCtrl) return;
+      if (progress >= 90) return;
+      const step = progress < 60 ? 6 : progress < 80 ? 3 : 1;
+      progress = Math.min(90, progress + step);
+      bar.style.width = progress + "%";
+    }, 180);
+  }
+
+  function done(){
+    const bar = el();
+    if (!bar) return;
+
+    stopTimer();
+    progress = 100;
+    bar.style.width = "100%";
+
+    // fade out après avoir atteint 100
+    setTimeout(() => {
+      bar.classList.remove("loading");
+      bar.style.opacity = "0";
+      // remet à 0% après disparition
+      setTimeout(() => { bar.style.width = "0%"; bar.style.opacity = ""; }, 180);
+    }, 150);
+  }
+
+  function abort(){
+    // si abort volontaire, soit on cache immédiatement,
+    // soit on laisse la nouvelle requête relancer start()
+    const bar = el();
+    if (!bar) return;
+    stopTimer();
+    bar.classList.remove("loading");
+    bar.style.width = "0%";
+    bar.style.opacity = "0";
+    setTimeout(() => { bar.style.opacity = ""; }, 180);
+  }
+
+  function stopTimer(){
+    if (timer) clearInterval(timer);
+    timer = null;
+  }
+
+  return { start, done, abort };
+})();
+
 
 document.addEventListener("DOMContentLoaded", () => {
   console.log("🏗️ DOM chargé, chargement vue sites");

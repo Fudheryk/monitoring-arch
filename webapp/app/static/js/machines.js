@@ -383,7 +383,10 @@ function filterMetrics() {
   const hideEl = document.getElementById("hideInactive");  // "Actifs"
   const advEl = document.getElementById("showAdvanced");   // "Avancées"
   if (!searchEl || !hideEl) return;
-  
+
+  const metricsGrid = document.getElementById("metricsGrid");
+  // on marquera data-ready=1 à la fin, après le 1er filtrage
+
   const search = (searchEl.value || "").toLowerCase().trim();
   const hideInactive = !!hideEl.checked;    // Masquer les inactives
   const showAdvanced = !!advEl?.checked;    // Afficher les avancées
@@ -468,6 +471,9 @@ function filterMetrics() {
     if (empty) empty.style.display = hasVisible ? "none" : "block";
     if (grid) grid.style.display = hasVisible ? "" : "none";
   });
+
+  // ✅ Une fois le filtrage appliqué, on révèle l'ensemble
+  if (metricsGrid) metricsGrid.dataset.ready = "1";
   
   // ========================================
   // SERVICES (inchangé)

@@ -513,6 +513,18 @@ input:focus {
     flex-wrap: wrap;
 }
 
+.navbar button {
+  width: 140px;
+  min-width: 140px;   /* évite le shrink */
+  max-width: 140px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: .5rem;
+  padding: 0.6rem 1rem;  /* garde ton style */
+  white-space: nowrap;
+}
+
 @media (max-width: 632px) {
     .nav-left {
         width: 100%;
@@ -959,21 +971,47 @@ footer {
     display: flex;
     gap: 2rem;
     flex-wrap: wrap;
+    align-items: flex-start;
 }
 
-.machines-aside {
-    min-width: 200px;
+.machines-aside{
+  flex: 0 0 200px; 
+  width: 200px;
+  max-width: 200px;
+  min-width: 0;
 }
 
-.machine-button {
-    margin-top: 0.5rem;
+.machine-button{
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
 }
+
 .machine-button.active {
     font-weight: bold;
 }
 
+.machine-button .machine-name{
+  flex: 1 1 auto;
+  min-width: 0;            /* clé pour ellipsis en flex */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .machine-main {
     flex: 1;
+}
+
+@media (max-width: 768px){
+  .machines-container{ flex-direction: column; }
+  .machines-aside{
+    width: 100%;
+    max-width: none;
+    flex: 0 0 auto;
+  }
 }
 
 /* Barre de recherche + filtres */
@@ -1498,6 +1536,87 @@ footer {
   color: rgba(255, 86, 86, 0.95);
 }
 
+#metricsGrid[data-ready="0"] .metric-card { display:none; }
+#metricsGrid[data-ready="0"] .grid { display:grid; }
+#metricsGrid[data-ready="0"] .group-no-results { display: none; }
+#metricsGrid[data-ready="0"] #noMetricsFound { display: none; }
+
+/* ----------------------------
+   Skeleton cards while loading
+   Show 1 placeholder card per group to avoid "titles stacked"
+-----------------------------*/
+
+/* Par défaut: skeleton caché (quand ready=1) */
+.skeleton-card { display: none; }
+
+/* Pendant chargement: on cache les vraies cards et on montre les skeletons */
+#metricsGrid[data-ready="0"] .metric-card { display: none; }
+#metricsGrid[data-ready="0"] .grid { display: grid; } /* on garde la grille visible */
+#metricsGrid[data-ready="0"] .skeleton-card { display: block; }
+
+/* Skeleton look & feel (même ton “glass”, légèrement plus soft) */
+.skeleton-card {
+  position: relative;
+  overflow: hidden;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.20);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+ }
+
+/* Shimmer */
+.skeleton-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-80%);
+  background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.00) 0%,
+    rgba(255,255,255,0.18) 35%,
+    rgba(255,255,255,0.30) 50%,
+    rgba(255,255,255,0.18) 65%,
+    rgba(255,255,255,0.00) 100%
+  );
+  /* blend + opacité => contraste */
+  opacity: 0.85;
+  mix-blend-mode: screen;
+  animation: skeleton-shimmer 1.05s linear infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0%   { transform: translateX(-80%); }
+  100% { transform: translateX(80%); }
+}
+
+/* Skeleton building blocks */
+.skeleton-line {
+  height: 12px;
+  border-radius: 10px;
+  margin: 10px 0;
+  background: rgba(255,255,255,0.14);
+}
+
+.skeleton-row {
+  display: flex;
+  gap: .5rem;
+  margin-top: .75rem;
+}
+
+.skeleton-pill {
+  height: 18px;
+  width: 64px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.14);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+
+/* widths */
+.w-40 { width: 40%; }
+.w-60 { width: 60%; }
+.w-80 { width: 80%; }
+
+
 @keyframes pulse-warning {
   0%   { box-shadow: 0 0 0 0 rgba(255,184,0,0.35); }
   70%  { box-shadow: 0 0 0 6px rgba(255,184,0,0); }
@@ -1530,4 +1649,47 @@ footer {
 }
 .is-missing:focus{
   box-shadow: 0 0 0 2px rgba(209,17,17,.15);
+}
+
+
+#nm-topbar{
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 0%;
+  z-index: 2000;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  box-shadow: 0 0 10px rgba(110, 72, 255, 0.35);
+  opacity: 0;
+  transform: translateZ(0);
+  transition: width 160ms ease, opacity 180ms ease;
+}
+
+/* petit "shimmer" optionnel */
+#nm-topbar::after{
+  content:"";
+  position:absolute;
+  top:0; bottom:0;
+  left:-30%;
+  width:30%;
+  background: rgba(255,255,255,0.35);
+  filter: blur(2px);
+  opacity: 0.6;
+  transform: skewX(-18deg);
+  animation: nm-topbar-shimmer 1s linear infinite;
+  display:none; /* activé seulement quand loading */
+}
+
+#nm-topbar.loading{
+  opacity: 1;
+}
+
+#nm-topbar.loading::after{
+  display:block;
+}
+
+@keyframes nm-topbar-shimmer{
+  0%   { left:-30%; }
+  100% { left:100%; }
 }
