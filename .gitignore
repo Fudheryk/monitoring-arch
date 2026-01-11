@@ -45,6 +45,8 @@ build/
 # Docker
 docker/docker-compose.override.yml
 docker/.env.docker
+docker/certs/*
+!docker/certs/.gitkeep
 
 # Celery
 server/celerybeat-schedule
