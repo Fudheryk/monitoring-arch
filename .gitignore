@@ -90,3 +90,4 @@ app.db
 
 # Fichiers utilitaires locaux
 cookies.txt
+job.log
