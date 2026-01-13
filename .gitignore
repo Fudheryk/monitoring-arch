@@ -1,6 +1,7 @@
 # =============================================================================
 # Python / Virtualenv
 # =============================================================================
+# Environnements virtuels locaux et CI
 .venv/
 venv/
 .venv-ci/
@@ -21,11 +22,14 @@ __pycache__/
 .coverage.*
 coverage.xml
 htmlcov/
-# Coverage générée côté server (si tu la mets là)
+
+# Coverage générée côté server (local / CI)
 server/.coverage*
-# Coverage générée côté docker / compose
+
+# Coverage générée via Docker / docker-compose
 docker/.coverage
-# Si ton projet peut créer un .coveragerc local dans server
+
+# Configuration coverage locale éventuelle
 server/.coveragerc
 
 # =============================================================================
@@ -44,15 +48,18 @@ dist/
 build/
 
 # =============================================================================
-# Secrets / Environment files (ne jamais pousser)
+# Secrets / Environment files (NE JAMAIS pousser)
 # =============================================================================
 .env
 .env.*
 !.env.example
+!.env.production.example
 .env.integration.local
+.env.docker
+.env.production
 
 # =============================================================================
-# IDE / OS
+# IDE / OS / Tooling
 # =============================================================================
 .vscode/
 .idea/
@@ -61,12 +68,17 @@ build/
 .tox/
 
 # =============================================================================
-# Docker / Local TLS
+# Docker / Local overrides
 # =============================================================================
+# Override local uniquement (jamais en prod)
 docker/docker-compose.override.yml
 docker/.env.docker
 
-# Certificats locaux TLS (mkcert) — NE JAMAIS pousser
+# =============================================================================
+# Docker TLS / Certificats
+# =============================================================================
+# Certificats TLS (Let's Encrypt, mkcert, etc.)
+# Générés sur le serveur → jamais versionnés
 docker/certs/*
 !docker/certs/.gitkeep
 
@@ -80,14 +92,20 @@ celerybeat-schedule
 # =============================================================================
 # Local runtime artifacts (à ne pas versionner)
 # =============================================================================
-# Logs générés localement (ex: scenario_matrix_*.log)
+# Logs locaux (scripts, debug, etc.)
 logs/
 
-# DB locale (si SQLite utilisée en dev / tests)
+# Fichiers DB locaux (sqlite, tests, dev)
 app.db
 *.sqlite
 *.sqlite3
 
-# Fichiers utilitaires locaux
+# Fichiers utilitaires / temporaires
 cookies.txt
 job.log
+run-logs.zip
+
+# =============================================================================
+# Backups (prod / local)
+# =============================================================================
+backups/

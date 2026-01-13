@@ -168,13 +168,14 @@ services:
       --appendonly yes
       --appendfsync everysec
     healthcheck:
-      test: ["CMD", "redis-cli", "--pass", "${REDIS_PASSWORD}", "ping"]
+      test: ["CMD-SHELL", "redis-cli --pass ${REDIS_PASSWORD} ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
     volumes:
       - redis_data:/data
-    restart: always
+    restart: unless-stopped
     networks:
       - monitoring-net
     logging:
@@ -185,10 +186,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 120M
+          memory: 150M
         reservations:
-          memory: 80M
-
+          memory: 100M
   # ---------------------------------------------------------------------------
   # Web Frontend (FastAPI SSR)
   # ---------------------------------------------------------------------------

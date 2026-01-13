@@ -1,67 +1,90 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # =============================================================================
-# Script de backup PostgreSQL
+# Backup PostgreSQL (prod)
 # =============================================================================
-# Crée un dump SQL compressé de la base de données
-# Conserve les 14 dernières sauvegardes (2 semaines)
-# Usage: ./scripts/backup-db.sh
+# - Dump PostgreSQL depuis le conteneur "db"
+# - Stocke dans ./backups/postgres/
+# - Rétention automatique (14 jours par défaut)
+#
+# Usage:
+#   ./scripts/backup-db.sh
 # =============================================================================
 
-set -e
+set -euo pipefail
+
+# --- Aller à la racine du repo, peu importe d'où on lance le script
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
 
 COMPOSE_FILE="docker/docker-compose.prod.yml"
-BACKUP_DIR="./backups/postgres"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_FILE="$BACKUP_DIR/monitoring_$TIMESTAMP.sql.gz"
-RETENTION_DAYS=14
+BACKUP_DIR="backups/postgres"
+RETENTION_DAYS="${RETENTION_DAYS:-14}"
 
-# Couleurs
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+# --- Charger les variables de prod dans l'environnement du script
+# (utile pour DB_PASSWORD, DOCKER_USERNAME, etc.)
+if [[ ! -f ".env.production" ]]; then
+  echo "❌ ERREUR: .env.production manquant à la racine du projet ($ROOT_DIR)"
+  echo "👉 Crée-le depuis .env.production.example"
+  exit 1
+fi
 
-echo -e "${YELLOW}=== Backup PostgreSQL ===${NC}"
+set -a
+# shellcheck disable=SC1091
+source ".env.production"
+set +a
 
-# Création du répertoire de backup
+# --- Vérifs minimales
+: "${DB_PASSWORD:?❌ DB_PASSWORD manquant dans .env.production}"
+
 mkdir -p "$BACKUP_DIR"
 
-# Chargement des variables d'environnement
-if [ -f ".env.production" ]; then
-    export $(cat .env.production | grep -v '^#' | xargs)
-fi
+timestamp="$(date +%Y%m%d_%H%M%S)"
+outfile="${BACKUP_DIR}/monitoring_${timestamp}.sql.gz"
 
-# Extraction du password depuis DATABASE_URL
-DB_PASSWORD=$(echo "$DATABASE_URL" | sed -n 's/.*:\/\/.*:\([^@]*\)@.*/\1/p')
+echo "════════════════════════════════════════════════════════════"
+echo "📦 Backup PostgreSQL → $outfile"
+echo "════════════════════════════════════════════════════════════"
 
-if [ -z "$DB_PASSWORD" ]; then
-    echo "ERREUR: Impossible d'extraire le mot de passe de la DATABASE_URL"
+# --- S'assurer que le service db est up (sinon backup impossible)
+# (si la stack n'est pas lancée, ça démarre la DB seulement)
+echo "→ Vérification / démarrage du service db si nécessaire…"
+docker compose -f "$COMPOSE_FILE" up -d db >/dev/null
+
+# --- Attendre que Postgres réponde
+echo "→ Attente DB (pg_isready)…"
+for i in {1..30}; do
+  if docker compose -f "$COMPOSE_FILE" exec -T db \
+      pg_isready -U postgres -d monitoring >/dev/null 2>&1; then
+    echo "✅ DB prête"
+    break
+  fi
+  if [[ $i -eq 30 ]]; then
+    echo "❌ DB non prête après 30s"
+    docker compose -f "$COMPOSE_FILE" logs --tail=80 db || true
     exit 1
+  fi
+  sleep 1
+done
+
+# --- Dump
+# Important: on passe le mot de passe via PGPASSWORD dans l'environnement de exec
+# et on utilise -T pour éviter les problèmes de TTY dans un script.
+echo "→ Dump en cours…"
+docker compose -f "$COMPOSE_FILE" exec -T \
+  -e PGPASSWORD="$DB_PASSWORD" db \
+  pg_dump -U postgres -d monitoring --no-owner --no-acl \
+  | gzip -9 > "$outfile"
+
+# --- Vérif taille
+if [[ ! -s "$outfile" ]]; then
+  echo "❌ Backup vide ou échoué: $outfile"
+  exit 1
 fi
 
-# Dump de la base
-echo "Création du backup..."
-docker compose -f "$COMPOSE_FILE" exec -T db \
-    pg_dump -U postgres -d monitoring \
-    | gzip > "$BACKUP_FILE"
+echo "✅ Backup OK : $(ls -lh "$outfile" | awk '{print $5}')"
 
-# Vérification
-if [ -f "$BACKUP_FILE" ] && [ -s "$BACKUP_FILE" ]; then
-    SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
-    echo -e "${GREEN}✓ Backup créé: $BACKUP_FILE ($SIZE)${NC}"
-else
-    echo "ERREUR: Le backup a échoué"
-    exit 1
-fi
+# --- Rétention
+echo "→ Nettoyage des backups > ${RETENTION_DAYS} jours…"
+find "$BACKUP_DIR" -name "monitoring_*.sql.gz" -type f -mtime +"$RETENTION_DAYS" -print -delete || true
 
-# Nettoyage des anciens backups
-echo "Nettoyage des backups de plus de $RETENTION_DAYS jours..."
-find "$BACKUP_DIR" -name "monitoring_*.sql.gz" -mtime +$RETENTION_DAYS -delete
-
-# Liste des backups restants
-echo "Backups disponibles:"
-ls -lh "$BACKUP_DIR"/monitoring_*.sql.gz 2>/dev/null || echo "  (aucun)"
-
-echo -e "${GREEN}=== Backup terminé ===${NC}"
-
-# TODO: Upload vers Google Drive (à implémenter)
-# ./scripts/upload-to-gdrive.sh "$BACKUP_FILE"
+echo "✅ Terminé"

@@ -41,8 +41,11 @@ dig neonmonitor.dockl.com
 
 ```bash
 cd /opt
-git clone https://github.com/votre-username/monitoring-arch.git
+git clone --no-checkout https://github.com/Fudheryk/monitoring-arch.git
 cd monitoring-arch
+git sparse-checkout init --cone
+git sparse-checkout set docker scripts docs .env.production.example
+git checkout main
 ```
 
 ### 3. Configuration des Variables d'Environnement
@@ -80,7 +83,8 @@ Pour le déploiement automatisé depuis GitHub Actions :
 
 ```bash
 # Sur GitHub : Settings > Secrets and variables > Actions
-DOCKER_USERNAME=votre_username_dockerhub
+DOCKER_USERNAME=fudheryk
+VERSION=latest
 DOCKER_PASSWORD=votre_token_dockerhub
 ```
 
@@ -109,7 +113,7 @@ Ce script va :
 ```bash
 # Export des variables pour docker-compose
 export VERSION=latest
-export DOCKER_USERNAME=votre_username
+export DOCKER_USERNAME=fudheryk
 
 # Démarrage de tous les services
 cd docker
@@ -166,8 +170,8 @@ Le script `deploy.sh` effectue automatiquement :
 ### Mise à jour manuelle
 
 ```bash
-export VERSION=v1.2.3
-export DOCKER_USERNAME=votre_username
+export DOCKER_USERNAME=fudheryk
+export VERSION=latest
 
 cd docker
 docker compose -f docker-compose.prod.yml pull
