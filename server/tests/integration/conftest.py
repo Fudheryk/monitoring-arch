@@ -65,13 +65,32 @@ def pytest_configure(config) -> None:
         "DATABASE_URL",
         "postgresql+psycopg://postgres:postgres@localhost:5432/monitoring",
     )
-    # 3) Raccourcir le cooldown pour les tests d’intégration (par défaut=15)
+    # 3) Raccourcir le cooldown pour les tests d’intégration (par défaut=1)
     os.environ.setdefault("ALERT_REMINDER_MINUTES", "1")
 
     # 4) IMPORTANT : si app.core.config a déjà été importé, le recharger
     if "app.core.config" in sys.modules:
         importlib.reload(sys.modules["app.core.config"])
 
+    # 5) Celery: exécution synchrone (eager) + broker/result en mémoire
+    os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "1")
+    os.environ.setdefault("CELERY_BROKER_URL", "memory://")
+    os.environ.setdefault("CELERY_RESULT_BACKEND", "cache+memory://")
+
+    # Recharger l’app Celery pour qu’elle lise les ENV ci-dessus
+    try:
+        import app.workers.celery_app as celery_app_mod
+        importlib.reload(celery_app_mod)
+        celery = getattr(celery_app_mod, "celery", None)
+        if celery:
+            celery.conf.task_always_eager = True
+            celery.conf.task_eager_propagates = True
+            celery.conf.broker_url = os.environ["CELERY_BROKER_URL"]
+            celery.conf.result_backend = os.environ["CELERY_RESULT_BACKEND"]
+            # optionnel : pas de stockage de résultats
+            celery.conf.task_ignore_result = True
+    except Exception as e:
+        print(f"[integration conftest] Celery eager patch skipped: {e}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Détection dynamique de la route targets

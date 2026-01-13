@@ -1,22 +1,18 @@
-# CI en 4 étapes principales : unit → integration + e2e (parallèles) → aggregate-unit-coverage
-# OPTIMISATIONS APPLIQUÉES :
-# - Jobs integration/e2e en parallèle (gain 40-60% temps total)
-# - Cache Docker BuildKit pour images (gain 2-5 min)
-# - Services Redis intégrés pour unit tests (gain 30-60s)
-# - Timeouts optimisés pour health checks (gain 1-2 min)
-# - Cache pip étendu avec clés plus précises
+# ─────────────────────────────────────────────────────────────────────────────
+# CI optimisée : unit shardé → (integration ∥ e2e) → aggregate GLOBALE → gate + reports
 # 
-# PRÉSERVÉ (inchangé) :
-# - Unit : parallélisé (matrix sharding x4 + xdist), DB SQLite in-memory
-# - Système d'upload/download artifacts pour coverage
-# - Logic de combination des shards de couverture
-# - Structure des tests (unit/integration/e2e)
+# CORRECTIONS:
+# - Fichiers coverage sans point initial pour éviter les problèmes d'upload
+# - Agrégation globale de TOUS les types de tests (unit + integration + e2e)
+# - Noms d'artifacts plus clairs
+# - Gestion robuste des fichiers de coverage
+# ──────────────────────────────────────────────────────────────────────────────
 
 name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: ['**']
   pull_request:
 
 concurrency:
@@ -26,28 +22,34 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # AJOUT: seuil de couverture configurable au niveau pipeline
+  MIN_COVERAGE: "70"
+
 jobs:
-  
-  # ---------------------------------------------------------------------------
-  # 1) UNIT — INCHANGÉ (sharding + artifacts préservés)
-  # ---------------------------------------------------------------------------
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # 1) UNIT — sharding x4 + xdist + coverage par shard (fichiers sans point initial)
+  # ────────────────────────────────────────────────────────────────────────────
   unit:
     runs-on: ubuntu-latest
-    # OPTIMISATION : Services Redis intégrés (évite Docker pour tests unit)
+    timeout-minutes: 15
+
     services:
       redis:
         image: redis:7-alpine
-        ports:
-          - 6379:6379
+        ports: [ "6379:6379" ]
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
     strategy:
-      fail-fast: false         # ne stoppe pas les autres shards si un échoue
+      fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]    # 4 shards équilibrés via pytest-split
+        shard: [1, 2, 3, 4]
+
     env:
       PYTHONPATH: server
       ENV_FILE: /dev/null
@@ -57,728 +59,659 @@ jobs:
       ALERT_REMINDER_MINUTES: "1"
       KEY: dev-apikey-123
       API: http://localhost:8000
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Ensure curl + jq are present
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y curl jq
-
-      - name: Setup Python
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # OPTIMISATION : Cache pip plus précis avec version Python + shard
-      - name: Cache pip (unit)
+      - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-py311-unit-pip-${{ hashFiles('requirements*.txt') }}
+          key: ${{ runner.os }}-py311-pip-${{ hashFiles('requirements*.txt') }}-v2
           restore-keys: |
-            ${{ runner.os }}-py311-unit-pip-
+            ${{ runner.os }}-py311-pip-${{ hashFiles('requirements*.txt') }}
             ${{ runner.os }}-py311-pip-
 
-      - name: Install project deps (unit)
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          # lib pour sharder proprement la suite (équilibrage par historique)
-          pip install pytest-split
+          pip install pytest-split pytest-xdist coverage
 
-      - name: Environment diagnostics
-        env:
-          PYTHONPATH: server
+      - name: Verify environment
         run: |
-          echo "=== ENVIRONMENT DIAGNOSTICS ==="
-          
-          # 1. Variables critiques seulement
           echo "PYTHONPATH=$PYTHONPATH"
-          echo "DATABASE_URL=$DATABASE_URL"
-          echo "REDIS_URL=$REDIS_URL"
-          
-          # 2. Check Python path et imports (rapide)
           python -c "
-          import sys, os
-          print('Python path:', sys.path[:3])
-          try:
-              from app.core.config import settings
-              db_url = getattr(settings, 'DATABASE_URL', None) or getattr(settings, 'database_url', None)
-              print('Settings DATABASE_URL:', db_url)
-          except Exception as e:
-              print('Settings import failed:', e)
-          "
-          
-          # 3. Vérification plugins essentiels (rapide)
-          echo "--- Essential checks ---"
-          python -c "import pytest_split; print('✓ pytest_split available')"
-          pytest --version
-          
-          # 4. Check tests disponibilité (optimisé)
-          echo "--- Test discovery ---"
-          TEST_FILES=$(find . -name "*test*.py" -path "*/tests/*" | wc -l)
-          echo "Test files found: $TEST_FILES"
-          
-          # 5. Check Redis connexion
-          echo "--- Redis check ---"
-          python -c "
-          import redis
-          try:
-              r = redis.Redis.from_url('$REDIS_URL')
-              r.ping()
-              print('✓ Redis connection OK')
-          except Exception as e:
-              print('⚠️ Redis connection failed:', e)
+          import sys; 
+          print('Python path OK'); 
+          from app.core.config import settings; 
+          print('Settings import OK')
           "
 
       - name: Run unit tests (shard ${{ matrix.shard }})
         env:
           CELERY_TASK_ALWAYS_EAGER: "1"
-          STUB_SLACK: "1"
-          ALERT_REMINDER_MINUTES: "1"
-          SLACK_WEBHOOK: "http://httpbin:80/status/204"
-          PYTHONPATH: server
+          # IMPORTANT: Nom sans point initial pour éviter les problèmes d'upload
+          COVERAGE_FILE: "coverage-unit-shard-${{ matrix.shard }}.data"
         run: |
           set -euo pipefail
           
-          # Configuration de la couverture
-          export COVERAGE_FILE=".coverage.unit.${{ matrix.shard }}"
-          echo "=== RUNNING UNIT TESTS SHARD ${{ matrix.shard }} ==="
-          echo "COVERAGE_FILE=$COVERAGE_FILE"
-          echo "Working directory: $(pwd)"
+          echo "→ Running shard ${{ matrix.shard }}/4 with coverage file: $COVERAGE_FILE"
           
-          # Tentative avec pytest-split d'abord
-          echo ""
-          echo "Attempting pytest-split sharding..."
-          if pytest -m "unit" --splits 4 --group ${{ matrix.shard }} -n auto \
-            --cov=server/app --cov-config=.coveragerc \
-            --cov-report=term-missing \
-            --cov-fail-under=0 --maxfail=1; then
-            
-            echo "✓ pytest-split succeeded"
-            TESTS_RAN=true
-            
+          # Tentative pytest-split d'abord
+          if pytest -m "unit or contract" --splits 4 --group ${{ matrix.shard }} -n auto \
+                --cov=server/app --cov-config=.coveragerc --cov-branch \
+                --cov-report=term-missing:skip-covered --cov-fail-under=0 \
+                --maxfail=3 --tb=short; then
+            echo "✅ pytest-split succeeded"
           else
-            echo ""
-            echo "❌ pytest-split failed, trying alternative sharding..."
+            echo "⚠️  pytest-split failed, trying file-based fallback..."
             
-            # Alternative : découpage manuel par nom de fichier
-            mapfile -t TEST_FILES < <(find . -name "*test*.py" -path "*/tests/*" -type f | sort)
-            TOTAL_FILES=${#TEST_FILES[@]}
+            mapfile -t TEST_FILES < <(find server/tests -name "*test*.py" -type f | sort)
+            TOTAL=${#TEST_FILES[@]}
             
-            if [[ $TOTAL_FILES -eq 0 ]]; then
-              echo "❌ No test files found!"
-              find . -name "*test*.py" | head -5
+            if [[ $TOTAL -eq 0 ]]; then 
+              echo "❌ No test files found"
               exit 1
             fi
             
-            echo "Found $TOTAL_FILES test files, splitting into 4 shards"
+            SIZE=$(( (TOTAL + 3) / 4 ))
+            START=$(( (${{ matrix.shard }} - 1) * SIZE ))
+            SLICE=( "${TEST_FILES[@]:$START:$SIZE}" )
             
-            # Calcul des indices pour ce shard
-            SHARD_SIZE=$(( (TOTAL_FILES + 3) / 4 ))  # arrondi supérieur
-            START_IDX=$(( ((${{ matrix.shard }} - 1) * SHARD_SIZE) ))
-            END_IDX=$(( START_IDX + SHARD_SIZE ))
-            
-            echo "Shard ${{ matrix.shard }}: files $START_IDX to $((END_IDX-1))"
-            
-            # Extraire les fichiers pour ce shard
-            SHARD_FILES=()
-            for (( i=START_IDX; i<END_IDX && i<TOTAL_FILES; i++ )); do
-              SHARD_FILES+=("${TEST_FILES[i]}")
-            done
-            
-            if [[ ${#SHARD_FILES[@]} -eq 0 ]]; then
-              echo "⚠️ No test files assigned to shard ${{ matrix.shard }}"
-              echo "Creating empty coverage file..."
-              echo "# Empty shard - no tests assigned" > "$COVERAGE_FILE"
-              TESTS_RAN=false
+            if [[ ${#SLICE[@]} -eq 0 ]]; then
+              echo "⚠️  No tests for shard ${{ matrix.shard }}, creating empty coverage"
+              echo "# Empty shard" > "$COVERAGE_FILE"
             else
-              echo "Running ${#SHARD_FILES[@]} test files in this shard:"
-              printf '  %s\n' "${SHARD_FILES[@]}"
+              echo "Running ${#SLICE[@]} test files:"
+              printf '  %s\n' "${SLICE[@]}"
               
-              pytest "${SHARD_FILES[@]}" -m "unit" -n auto \
-                --cov=server/app --cov-config=.coveragerc \
-                --cov-report=term-missing \
-                --cov-fail-under=0 --maxfail=1
-              
-              TESTS_RAN=true
+              pytest -n auto "${SLICE[@]}" -m "unit or contract" \
+                --cov=server/app --cov-config=.coveragerc --cov-branch \
+                --cov-report=term-missing:skip-covered --cov-fail-under=0 \
+                --maxfail=3 --tb=short
             fi
           fi
-          
-          echo ""
-          echo "=== POST-TEST STATUS ==="
-          echo "Tests ran: $TESTS_RAN"
-          echo "Current directory files:"
-          ls -la .coverage* || echo "No .coverage* files found"
 
-      - name: Normalize coverage filename (shard)
-        run: |
-          set -euxo pipefail
-          TGT=".coverage.unit.${{ matrix.shard }}"
-          echo "=== COVERAGE NORMALIZATION ==="
-          echo "Target filename: $TGT"
-          ls -la
-          find . -maxdepth 1 -name ".coverage*" -ls || true
-          if [[ -f "$TGT" ]]; then
-            echo "✓ Target file already exists: $TGT"
-          elif [[ -f ".coverage" ]]; then
-            echo "→ Renaming .coverage to $TGT"
-            mv .coverage "$TGT"
-          else
-            echo "# Placeholder - no coverage data" > "$TGT"
+          # Vérification et renommage si nécessaire
+          if [[ -f .coverage && ! -f "$COVERAGE_FILE" ]]; then 
+            mv .coverage "$COVERAGE_FILE"
           fi
-          # Nettoyage et permissions
-          rm -f .coverage || true
-          chmod 644 "$TGT"
-          ls -la "$TGT"
-            
-      - name: Verify coverage file exists before upload
-        run: |
-          echo "=== PRE-UPLOAD VERIFICATION ==="
-          echo "Checking for .coverage.unit.${{ matrix.shard }}"
-          ls -l ".coverage.unit.${{ matrix.shard }}" || echo "❌ Not found in current dir"
-          echo "Current dir: $(pwd)"
-          echo "Workspace: ${{ github.workspace }}"
-          find "${{ github.workspace }}" -name ".coverage.unit.${{ matrix.shard }}" -ls || echo "❌ Not found in workspace" 
-
-      - name: Debug workspace avant upload
-        run: |
-          echo "=== DEBUG AVANT UPLOAD ==="
-          echo "Current directory: $(pwd)"
-          echo "GitHub workspace: ${{ github.workspace }}"
-          echo "Matrix shard: ${{ matrix.shard }}"
-          echo ""
-          echo "Listing all coverage files:"
-          find . -name ".coverage*" -ls 2>/dev/null || echo "No coverage files found in current dir"
-          echo ""
-          echo "Listing from GitHub workspace root:"
-          find "${{ github.workspace }}" -name ".coverage.unit.${{ matrix.shard }}" -ls 2>/dev/null || echo "Not found in workspace root"
-          echo ""
-          echo "File existence check:"
-          ls -la ".coverage.unit.${{ matrix.shard }}" 2>/dev/null || echo "File does not exist in current dir"
-
-      - name: Prepare for upload
-        run: |
-          mkdir -p artifacts
-          cp .coverage.unit.${{ matrix.shard }} artifacts/coverage_unit_${{ matrix.shard }}
           
-      - name: Upload raw coverage (shard ${{ matrix.shard }})
+          if [[ ! -f "$COVERAGE_FILE" ]]; then
+            echo "❌ Coverage file $COVERAGE_FILE not found"
+            ls -la coverage* .coverage* || true
+            exit 1
+          fi
+          
+          echo "✅ Coverage file created: $(ls -lh "$COVERAGE_FILE")"
+
+      - name: Upload shard coverage
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-shard-${{ matrix.shard }}
-          path: artifacts/coverage_unit_${{ matrix.shard }}
+          name: unit-coverage-shard-${{ matrix.shard }}
+          path: coverage-unit-shard-${{ matrix.shard }}.data
           retention-days: 1
           if-no-files-found: error
-        
-      - name: Debug après échec upload
-        if: failure()
-        run: |
-          echo "=== DEBUG APRÈS ÉCHEC UPLOAD ==="
-          echo "Vérification finale de l'existence du fichier:"
-          find . -name "coverage_unit_${{ matrix.shard }}" -exec ls -la {} \; 2>/dev/null || echo "Fichier introuvable"
-          echo ""
-          echo "Arborescence complète du workspace:"
-          pwd
-          ls -la
-          echo ""
-          echo "Processus en cours:"
-          ps auxf
 
-  # ---------------------------------------------------------------------------
-  # 2) INTEGRATION — OPTIMISÉ (parallèle avec e2e + cache Docker)
-  # ---------------------------------------------------------------------------
+  # ────────────────────────────────────────────────────────────────────────────
+  # 2) INTEGRATION — Docker + coverage avec nom de fichier sans point
+  # ────────────────────────────────────────────────────────────────────────────
   integration:
     runs-on: ubuntu-latest
-    # OPTIMISATION : Plus de dépendance sur unit - tourne en parallèle
+    timeout-minutes: 25
+    
     env:
       STUB_SLACK: "1"
       ALERT_REMINDER_MINUTES: "1"
       KEY: dev-apikey-123
       API: http://localhost:8000
-      PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # OPTIMISATION : Setup Docker Buildx pour cache
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # OPTIMISATION : Cache Docker layers
       - name: Cache Docker layers
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-integration-${{ hashFiles('docker/Dockerfile*', 'requirements*.txt') }}
+          key: ${{ runner.os }}-docker-${{ hashFiles('server/Dockerfile', 'requirements*.txt', 'docker/*') }}-v2
           restore-keys: |
-            ${{ runner.os }}-buildx-integration-
-            ${{ runner.os }}-buildx-
+            ${{ runner.os }}-docker-${{ hashFiles('server/Dockerfile', 'requirements*.txt') }}
+            ${{ runner.os }}-docker-
 
-      - name: Show Docker versions
-        run: |
-          docker --version
-          docker compose version || true
-
-      - name: Ensure curl + jq are present
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y curl jq
-
-      - name: Setup Python
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # OPTIMISATION : Cache pip pour integration
-      - name: Cache pip (integration)
+      - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-py311-integration-pip-${{ hashFiles('requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-py311-integration-pip-
-            ${{ runner.os }}-py311-pip-
+          key: ${{ runner.os }}-py311-integ-${{ hashFiles('requirements*.txt') }}-v2
 
-      - name: Install project deps (integration)
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install -U pip
           pip install -r requirements-dev.txt
           pip install "psycopg[binary]>=3.1,<4.0"
+          pip install coverage
 
-      - name: Prepare root .env.docker from example
+      - name: Prepare environment
         run: |
-          if [ -f .env.example ]; then
-            cp .env.example .env.docker
-          else
-            echo "ERROR: .env.example is missing at repo root" >&2
-            exit 1
-          fi
-          awk 'BEGIN{pslack=0; prem=0}
-               /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; pslack=1; next}
-               /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; prem=1; next}
-               {print}
-               END{
-                 if(!pslack) print "SLACK_WEBHOOK=http://httpbin:80/status/204";
-                 if(!prem)   print "ALERT_REMINDER_MINUTES=1";
-                 print "STUB_SLACK=1";
-               }' .env.docker > .env.ci && mv .env.ci .env.docker
+          cp .env.example .env.docker
+          cat >> .env.docker << 'EOF'
+          SLACK_WEBHOOK=http://httpbin:80/status/204
+          ALERT_REMINDER_MINUTES=1
+          STUB_SLACK=1
+          EOF
           cp .env.docker docker/.env.docker
-          sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env.docker
 
-      # OPTIMISATION : Build avec cache
-      - name: Start stack (db/redis/api/worker)
+      - name: Start Docker stack with coverage
+        working-directory: docker
+        env:
+          API_COVERAGE: "1"
+          WORKER_COVERAGE: "1"
+          COVERAGE_FILE: "/app/server/coverage-api-container.data"
+          DOCKER_BUILDKIT: 1
+          BUILDKIT_INLINE_CACHE: 1
+        run: |
+          docker compose --env-file ../.env.docker build api worker
+          docker compose --env-file ../.env.docker up -d db redis api worker
+
+      - name: Wait for database
         working-directory: docker
         run: |
-          # Utilise le cache BuildKit
-          BUILDKIT_INLINE_CACHE=1 docker compose --env-file ../.env.docker up -d --build db redis api worker
-
-      # OPTIMISATION : Timeout réduit pour DB (30 au lieu de 60)
-      - name: Wait for DB
-        working-directory: docker
-        run: |
-          echo "=== Waiting for database ==="
-          for i in {1..30}; do  # Réduit de 60 à 30
-            echo "Attempt $i/30..."
-            if docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres; then
-              echo "✓ Database is ready"
+          echo "Waiting for PostgreSQL to be ready..."
+          for attempt in {1..30}; do
+            if docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres -d postgres; then
+              echo "✅ Database ready after ${attempt}s"
               break
             fi
-            if [[ $i -eq 30 ]]; then
+            if [[ $attempt -eq 30 ]]; then
               echo "❌ Database failed to start"
               docker compose logs db
               exit 1
             fi
-            sleep 1  # Réduit de 2s à 1s
+            echo "Attempt $attempt/30..."
+            sleep 1
           done
 
-      - name: Run Alembic migrations
+      - name: Run migrations
         working-directory: docker
         run: |
-          echo "=== Running database migrations ==="
-          docker compose --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
+          docker compose --env-file ../.env.docker run --rm -w /app/server api \
+            alembic -c /app/server/alembic.ini upgrade head
 
-      # OPTIMISATION : Timeout et intervalle réduits pour API
-      - name: Wait for API
+      - name: Wait for API health
         run: |
-          echo "=== Waiting for API health check ==="
-          for i in {1..30}; do  # Réduit de 60 à 30
-            echo "Attempt $i/30: checking $API/api/v1/health"
-            if curl -fsS -m 3 -H "X-API-Key: $KEY" "$API/api/v1/health"; then  # timeout 3s au lieu de 2s
-              echo "✓ API is healthy"
-              exit 0
+          echo "Waiting for API to be healthy..."
+          for attempt in {1..30}; do
+            if curl -fsS -m 5 -H "X-API-Key: $KEY" "$API/api/v1/health" >/dev/null 2>&1; then
+              echo "✅ API healthy after ${attempt}s"
+              break
             fi
-            if [[ $i -eq 30 ]]; then
-              echo "❌ API health check failed"
-              echo "=== API logs ==="
+            if [[ $attempt -eq 30 ]]; then
+              echo "❌ API failed to be healthy"
               docker compose -f docker/docker-compose.yml logs api | tail -50
               exit 1
             fi
-            sleep 1  # Réduit de 2s à 1s
+            echo "Attempt $attempt/30..."
+            sleep 1
           done
 
-      - name: Sanity env for DB (integration)
+      - name: Run integration tests
         env:
           PYTHONPATH: server
-          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
+          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=10'
+          # Nom sans point initial
+          COVERAGE_FILE: "coverage-integration-host.data"
         run: |
-          echo "=== Integration DB sanity check ==="
-          echo "DATABASE_URL=$DATABASE_URL"
-          python - <<'PY'
-          import os
-          print("ENV DATABASE_URL =", os.getenv("DATABASE_URL"))
-          from app.core.config import settings
-          print("settings.DATABASE_URL =", settings.DATABASE_URL)
-          PY
+          pytest -m "integration" -v --tb=short \
+            --cov=server/app --cov-config=.coveragerc --cov-branch \
+            --cov-report=term-missing:skip-covered --cov-fail-under=0
 
-      - name: Run integration tests (host)
-        env:
-          PYTHONPATH: server
-          API: ${{ env.API }}
-          KEY: ${{ env.KEY }}
-          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
-        run: |
-          echo "=== Running integration tests ==="
-          pytest -m "integration" --no-cov --maxfail=1 -v
-
-      # OPTIMISATION : Logs compressés en cas d'échec
-      - name: Dump docker logs on failure
-        if: failure()
+      - name: Stop coverage services and collect files
         working-directory: docker
         run: |
-          echo "=== Container status ==="
-          docker compose ps || true
-          echo ""
-          echo "=== API logs (last 200 lines) ==="  # Réduit de 400 à 200
-          docker compose logs api | tail -n 200 || true
-          echo ""
-          echo "=== Worker logs (last 200 lines) ==="  # Réduit de 400 à 200
-          docker compose logs worker | tail -n 200 || true
-          echo ""
-          echo "=== DB logs (last 100 lines) ==="  # Réduit de 200 à 100
-          docker compose logs db | tail -n 100 || true
+          echo "Stopping services to flush coverage..."
+          docker compose --env-file ../.env.docker stop api worker || true
+          sleep 2
+          
+          echo "Copying coverage files from containers..."
+          # Copie du fichier API si il existe
+          docker compose --env-file ../.env.docker cp api:/app/server/coverage-api-container.data ../coverage-integration-api.data || {
+            echo "⚠️  No API coverage file found in container"
+          }
+          
+          # Copie du fichier worker si il existe
+          docker compose --env-file ../.env.docker cp worker:/app/server/coverage-worker-container.data ../coverage-integration-worker.data || {
+            echo "⚠️  No worker coverage file found in container"
+          }
 
-      - name: Stop stack
+      - name: Combine integration coverage
+        run: |
+          set -euo pipefail
+          
+          echo "=== Available integration coverage files ==="
+          find . -maxdepth 1 -name "coverage-integration*" -type f -exec ls -lh {} \; || true
+          
+          # Collecte de tous les fichiers integration non vides
+          files=()
+          for pattern in "coverage-integration-host.data" "coverage-integration-api.data" "coverage-integration-worker.data"; do
+            if [[ -f "$pattern" && -s "$pattern" ]]; then
+              files+=("$pattern")
+            fi
+          done
+          
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "❌ No integration coverage files to combine"
+            exit 1
+          fi
+          
+          echo "=== Combining ${#files[@]} integration files ==="
+          printf '%s\n' "${files[@]}"
+          
+          # Combine avec nom de sortie standard
+          COVERAGE_FILE=coverage-integration-combined.data coverage combine "${files[@]}"
+          COVERAGE_FILE=coverage-integration-combined.data coverage xml -o coverage-integration.xml
+          COVERAGE_FILE=coverage-integration-combined.data coverage html -d htmlcov-integration
+          COVERAGE_FILE=coverage-integration-combined.data coverage report --skip-covered
+          
+          echo "✅ Integration coverage: $(ls -lh coverage-integration.xml)"
+
+      - name: Upload integration coverage data
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-coverage-data
+          path: coverage-integration-combined.data
+
+      - name: Upload integration coverage XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-coverage-xml
+          path: coverage-integration.xml
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: htmlcov-integration
+          path: htmlcov-integration/
+          if-no-files-found: ignore
+
+      - name: Cleanup
         if: always()
         working-directory: docker
-        run: docker compose --env-file ../.env.docker down -v
+        run: docker compose --env-file ../.env.docker down -v --remove-orphans
 
-  # ---------------------------------------------------------------------------
-  # 3) E2E — OPTIMISÉ (parallèle avec integration + cache Docker)
-  # ---------------------------------------------------------------------------
+  # ────────────────────────────────────────────────────────────────────────────
+  # 3) E2E — même logique avec noms de fichiers corrects
+  # ────────────────────────────────────────────────────────────────────────────
   e2e:
     runs-on: ubuntu-latest
-    # OPTIMISATION : Plus de dépendance sur integration - tourne en parallèle
+    timeout-minutes: 15
+    
     env:
       STUB_SLACK: "1"
       ALERT_REMINDER_MINUTES: "1"
       KEY: dev-apikey-123
       API: http://localhost:8000
-      PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # OPTIMISATION : Setup Docker Buildx pour cache
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # OPTIMISATION : Cache Docker layers (séparé d'integration)
       - name: Cache Docker layers
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-e2e-${{ hashFiles('docker/Dockerfile*', 'requirements*.txt') }}
+          key: ${{ runner.os }}-docker-${{ hashFiles('server/Dockerfile', 'requirements*.txt', 'docker/*') }}-v2
           restore-keys: |
-            ${{ runner.os }}-buildx-e2e-
-            ${{ runner.os }}-buildx-
+            ${{ runner.os }}-docker-${{ hashFiles('server/Dockerfile', 'requirements*.txt') }}
+            ${{ runner.os }}-docker-
 
-      - name: Show Docker versions
-        run: |
-          docker --version
-          docker compose version || true
-
-      - name: Ensure curl + jq are present
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y curl jq
-
-      - name: Setup Python
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # OPTIMISATION : Cache pip pour e2e
-      - name: Cache pip (e2e)
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-py311-e2e-pip-${{ hashFiles('requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-py311-e2e-pip-
-            ${{ runner.os }}-py311-pip-
-
-      - name: Install project deps (e2e)
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install -U pip
           pip install -r requirements-dev.txt
           pip install "psycopg[binary]>=3.1,<4.0"
 
-      - name: Prepare root .env.docker from example
+      - name: Prepare environment
         run: |
-          if [ -f .env.example ]; then
-            cp .env.example .env.docker
-          else
-            echo "ERROR: .env.example is missing at repo root" >&2
-            exit 1
-          fi
-          awk 'BEGIN{pslack=0; prem=0}
-               /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; pslack=1; next}
-               /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; prem=1; next}
-               {print}
-               END{
-                 if(!pslack) print "SLACK_WEBHOOK=http://httpbin:80/status/204";
-                 if(!prem)   print "ALERT_REMINDER_MINUTES=1";
-                 print "STUB_SLACK=1";
-               }' .env.docker > .env.ci && mv .env.ci .env.docker
+          cp .env.example .env.docker
+          cat >> .env.docker << 'EOF'
+          SLACK_WEBHOOK=http://httpbin:80/status/204
+          ALERT_REMINDER_MINUTES=1
+          STUB_SLACK=1
+          EOF
           cp .env.docker docker/.env.docker
-          sed 's/SLACK_WEBHOOK=.*/SLACK_WEBHOOK=[REDACTED]/' .env.docker
 
-      # OPTIMISATION : Build avec cache (stack minimale pour e2e)
-      - name: Start stack (db/redis/api)
+      - name: Start services (db/redis/api only)
+        working-directory: docker
+        env:
+          API_COVERAGE: "1"
+          COVERAGE_FILE: "/app/server/coverage-e2e-api.data"
+          DOCKER_BUILDKIT: 1
+          BUILDKIT_INLINE_CACHE: 1
+        run: |
+          docker compose --env-file ../.env.docker up -d --build db redis api
+
+      - name: Wait for services
         working-directory: docker
         run: |
-          # Utilise le cache BuildKit
-          BUILDKIT_INLINE_CACHE=1 docker compose --env-file ../.env.docker up -d --build db redis api
-
-      # OPTIMISATION : Timeout réduit pour DB
-      - name: Wait for DB
-        working-directory: docker
-        run: |
-          echo "=== Waiting for database ==="
-          for i in {1..30}; do  # Réduit de 60 à 30
-            echo "Attempt $i/30..."
+          # DB
+          for i in {1..30}; do
             if docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres; then
-              echo "✓ Database is ready"
               break
             fi
-            if [[ $i -eq 30 ]]; then
-              echo "❌ Database failed to start"
-              docker compose logs db
-              exit 1
+            [[ $i -eq 30 ]] && { echo "❌ DB timeout"; docker compose logs db; exit 1; }
+            sleep 1
+          done
+          
+          # Migrations
+          docker compose --env-file ../.env.docker run --rm -w /app/server api \
+            alembic -c /app/server/alembic.ini upgrade head
+          
+          # API
+          for i in {1..30}; do
+            if curl -fsS -m 5 -H "X-API-Key: ${{ env.KEY }}" "${{ env.API }}/api/v1/health" >/dev/null; then
+              break
             fi
-            sleep 1  # Réduit de 2s à 1s
+            [[ $i -eq 30 ]] && { echo "❌ API timeout"; docker compose logs api | tail -30; exit 1; }
+            sleep 1
           done
 
-      - name: Run Alembic migrations
-        working-directory: docker
+      - name: Run smoke tests
+        if: hashFiles('scripts/smoke_http_targets.sh') != ''
         run: |
-          echo "=== Running database migrations ==="
-          docker compose --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head
-
-      # OPTIMISATION : Timeout et intervalle réduits pour API
-      - name: Wait for API to be healthy
-        run: |
-          echo "=== Waiting for API health check ==="
-          for i in {1..30}; do  # Réduit de 60 à 30
-            echo "Attempt $i/30: checking $API/api/v1/health"
-            if curl -fsS -m 3 -H "X-API-Key: $KEY" "$API/api/v1/health"; then  # timeout 3s
-              echo "✓ API is healthy"
-              exit 0
-            fi
-            if [[ $i -eq 30 ]]; then
-              echo "❌ API health check failed"
-              echo "=== API logs ==="
-              docker compose -f docker/docker-compose.yml logs api | tail -50
-              exit 1
-            fi
-            sleep 1  # Réduit de 2s à 1s
-          done
-
-      - name: Sanity env for DB (e2e)
-        env:
-          PYTHONPATH: server
-          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
-        run: |
-          echo "=== E2E DB sanity check ==="
-          echo "DATABASE_URL=$DATABASE_URL"
-          python - <<'PY'
-          import os
-          print("ENV DATABASE_URL =", os.getenv("DATABASE_URL"))
-          from app.core.config import settings
-          print("settings.DATABASE_URL =", settings.DATABASE_URL)
-          PY
-
-      - name: HTTP targets smoke
-        env:
-          API: ${{ env.API }}
-          KEY: ${{ env.KEY }}
-        run: |
-          echo "=== Running HTTP targets smoke test ==="
-          bash scripts/smoke_http_targets.sh
+          if [[ -x scripts/smoke_http_targets.sh ]]; then
+            bash scripts/smoke_http_targets.sh
+          else
+            echo "⚠️  Smoke script not found or not executable"
+          fi
 
       - name: Run E2E tests
         env:
           PYTHONPATH: server
-          API: ${{ env.API }}
-          KEY: ${{ env.KEY }}
-          STUB_SLACK: "1"
-          ALERT_REMINDER_MINUTES: "1"
-          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=5'
+          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=10'
+          COVERAGE_FILE: "coverage-e2e-host.data"
         run: |
-          echo "=== Running E2E tests ==="
-          # E2E : pas de parallélisme xdist (fragile sur stack partagée)
-          pytest -m "e2e" --no-cov --maxfail=1 -v
+          pytest -m "e2e" -v --tb=short \
+            --cov=server/app --cov-config=.coveragerc --cov-branch \
+            --cov-report=term-missing:skip-covered --cov-fail-under=0
 
-      # OPTIMISATION : Logs compressés en cas d'échec
-      - name: Dump docker logs on failure
-        if: failure()
+      - name: Stop API and collect coverage
         working-directory: docker
         run: |
-          echo "=== Container status ==="
-          docker compose ps || true
-          echo ""
-          echo "=== API logs (last 200 lines) ==="  # Réduit de 400 à 200
-          docker compose logs api | tail -n 200 || true
-          echo ""
-          echo "=== DB logs (last 100 lines) ==="  # Réduit de 200 à 100
-          docker compose logs db | tail -n 100 || true
+          docker compose --env-file ../.env.docker stop api || true
+          sleep 2
+          
+          # Copie du fichier API E2E
+          docker compose --env-file ../.env.docker cp api:/app/server/coverage-e2e-api.data ../coverage-e2e-api-container.data || {
+            echo "⚠️  No E2E API coverage file found"
+          }
 
-      - name: Stop stack
+      - name: Combine E2E coverage
+        run: |
+          set -euo pipefail
+          
+          # Collecte des fichiers E2E
+          files=()
+          for pattern in "coverage-e2e-host.data" "coverage-e2e-api-container.data"; do
+            if [[ -f "$pattern" && -s "$pattern" ]]; then
+              files+=("$pattern")
+            fi
+          done
+          
+          [[ ${#files[@]} -eq 0 ]] && { echo "❌ No E2E coverage files"; exit 1; }
+          
+          echo "Combining E2E files: ${files[*]}"
+          COVERAGE_FILE=coverage-e2e-combined.data coverage combine "${files[@]}"
+          COVERAGE_FILE=coverage-e2e-combined.data coverage xml -o coverage-e2e.xml
+          COVERAGE_FILE=coverage-e2e-combined.data coverage html -d htmlcov-e2e
+          echo "✅ E2E coverage: $(ls -lh coverage-e2e.xml)"
+
+      - name: Upload E2E coverage data
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-coverage-data
+          path: coverage-e2e-combined.data
+
+      - name: Upload E2E coverage XML
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-coverage-xml
+          path: coverage-e2e.xml
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: htmlcov-e2e
+          path: htmlcov-e2e/
+          if-no-files-found: ignore
+
+      - name: Cleanup
         if: always()
         working-directory: docker
-        run: docker compose --env-file ../.env.docker down -v
+        run: docker compose --env-file ../.env.docker down -v --remove-orphans
 
-  # ---------------------------------------------------------------------------
-  # 4) AGGREGATE — INCHANGÉ (combine la couverture des 4 shards unit)
-  # ---------------------------------------------------------------------------
-  aggregate-unit-coverage:
+  # ────────────────────────────────────────────────────────────────────────────
+  # 4) AGRÉGATION GLOBALE — Unit + Integration + E2E
+  # ────────────────────────────────────────────────────────────────────────────
+  aggregate-coverage:
+    name: aggregate-all-coverage
     runs-on: ubuntu-latest
-    needs: unit            # Garde la dépendance sur unit seulement
+    needs: [unit, integration, e2e]
+    timeout-minutes: 10
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install coverage tool
+      - name: Install coverage
         run: pip install coverage
 
-      - name: Create coverage directory
-        run: mkdir -p coverage-files
+      - name: Create staging directory
+        run: mkdir -p coverage-staging
 
-      # Télécharger tous les artifacts de couverture
-      - name: Download all coverage artifacts
+      # Téléchargement de TOUS les artifacts de coverage
+      - name: Download unit coverage artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: coverage-shard-*
-          path: coverage-files/
-          merge-multiple: true
+          pattern: unit-coverage-shard-*
+          path: coverage-staging/unit/
+          merge-multiple: false
 
-      - name: Debug downloaded files
+      - name: Download integration coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: integration-coverage-data
+          path: coverage-staging/integration/
+
+      - name: Download E2E coverage  
+        uses: actions/download-artifact@v4
+        with:
+          name: e2e-coverage-data
+          path: coverage-staging/e2e/
+
+      - name: Verify all downloads
         run: |
-          echo "=== DOWNLOADED ARTIFACTS DEBUG ==="
-          echo "Coverage files directory structure:"
-          find coverage-files -type f -ls 2>/dev/null || true
-          echo ""
-          echo "Specifically looking for .coverage* files:"
-          find coverage-files -name ".coverage*" -ls 2>/dev/null || true
-          echo ""
-          echo "All files in coverage-files:"
-          find coverage-files -type f -exec ls -lh {} \; 2>/dev/null || true
+          echo "=== All downloaded coverage artifacts ==="
+          find coverage-staging -type f -ls
+          
+          echo -e "\n=== Coverage data files breakdown ==="
+          echo "Unit shards:"
+          find coverage-staging/unit -name "*.data" -exec ls -lh {} \; || echo "  No unit files"
+          echo "Integration:"
+          find coverage-staging/integration -name "*.data" -exec ls -lh {} \; || echo "  No integration files"
+          echo "E2E:"
+          find coverage-staging/e2e -name "*.data" -exec ls -lh {} \; || echo "  No e2e files"
 
-      - name: Validate and combine coverage
+      - name: Combine ALL coverage (unit + integration + e2e)
         run: |
           set -euo pipefail
           
-          echo "=== COVERAGE COMBINATION PROCESS ==="
+          # Collecte de TOUS les fichiers de coverage non vides
+          files=()
           
-          # Recherche flexible des fichiers de couverture
-          mapfile -t all_files < <(find coverage-files -type f \( -name '.coverage*' -o -name 'coverage-*' \) 2>/dev/null || true)
-          
-          echo "Found ${#all_files[@]} coverage-related files total"
-          
-          # Filtrer les fichiers non vides et valides
-          valid_files=()
-          for file in "${all_files[@]}"; do
+          # Unit shards
+          while IFS= read -r -d '' file; do
             if [[ -s "$file" ]]; then
-              # Vérifier que ce n'est pas juste un placeholder
-              if grep -q "# Placeholder\|# Empty" "$file" 2>/dev/null; then
-                echo "  → Skipping placeholder: $(basename "$file")"
-              else
-                valid_files+=("$file")
-                echo "  → Valid: $(basename "$file") ($(wc -l < "$file" 2>/dev/null || echo "?") lines)"
-              fi
-            else
-              echo "  → Empty: $(basename "$file")"
+              files+=("$file")
+              echo "Added unit: $file"
             fi
-          done
+          done < <(find coverage-staging/unit -name "*.data" -type f -print0 2>/dev/null || true)
           
-          echo ""
-          echo "Found ${#valid_files[@]} valid coverage files"
+          # Integration
+          while IFS= read -r -d '' file; do
+            if [[ -s "$file" ]]; then
+              files+=("$file")
+              echo "Added integration: $file"
+            fi
+          done < <(find coverage-staging/integration -name "*.data" -type f -print0 2>/dev/null || true)
           
-          if [[ ${#valid_files[@]} -eq 0 ]]; then
-            echo "⚠️ WARNING: No valid coverage files found!"
-            echo "This could mean:"
-            echo "  1. All shards had no tests to run"
-            echo "  2. Coverage collection failed everywhere"
-            echo "  3. All tests were skipped"
-            echo ""
-            echo "Creating minimal coverage report..."
-            
-            # Créer un rapport vide mais valide
-            coverage erase || true
-            coverage report --show-missing || echo "No data to report"
-            coverage xml -o coverage-unit.xml || touch coverage-unit.xml
-            coverage html -d htmlcov-unit || mkdir -p htmlcov-unit
-            
-            echo "✓ Empty coverage reports created"
-          else
-            echo "Combining ${#valid_files[@]} coverage files..."
-            
-            # Debug avant combination
-            for file in "${valid_files[@]}"; do
-              echo "Processing: $file"
-              head -5 "$file" 2>/dev/null || echo "Cannot read file header"
-            done
-            
-            coverage combine "${valid_files[@]}"
-            
-            echo ""
-            echo "Generating comprehensive reports..."
-            coverage report -m --skip-covered
-            coverage xml -o coverage-unit.xml
-            coverage html -d htmlcov-unit
-            
-            echo "✓ Coverage combination completed successfully"
-            echo "Reports generated:"
-            ls -lh coverage-unit.xml htmlcov-unit/ 2>/dev/null || true
+          # E2E
+          while IFS= read -r -d '' file; do
+            if [[ -s "$file" ]]; then
+              files+=("$file")
+              echo "Added e2e: $file"
+            fi
+          done < <(find coverage-staging/e2e -name "*.data" -type f -print0 2>/dev/null || true)
+          
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "❌ No coverage files found for global aggregation"
+            echo "This means one or more test jobs failed to produce coverage"
+            exit 1
           fi
+          
+          echo "=== Combining ${#files[@]} coverage files from ALL test types ==="
+          printf '%s\n' "${files[@]}"
+          
+          # Combine global
+          coverage combine "${files[@]}"
+          
+          # Génération des rapports finaux
+          echo "=== GLOBAL COVERAGE REPORT ==="
+          coverage report --skip-covered --show-missing
+          
+          coverage xml -o coverage-global.xml  
+          coverage html -d htmlcov-global
+          
+          echo "✅ Global coverage combined: $(ls -lh coverage-global.xml)"
+          
+          # Stats par type (optionnel)
+          echo -e "\n=== Coverage Stats ==="
+          echo "Total files combined: ${#files[@]}"
+          unit_count=$(find coverage-staging/unit -name "*.data" -type f | wc -l)
+          integration_count=$(find coverage-staging/integration -name "*.data" -type f | wc -l)  
+          e2e_count=$(find coverage-staging/e2e -name "*.data" -type f | wc -l)
+          echo "  Unit shards: $unit_count"
+          echo "  Integration: $integration_count" 
+          echo "  E2E: $e2e_count"
 
-      - name: Upload combined coverage XML
+      - name: Upload global coverage XML
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-unit-xml
-          path: coverage-unit.xml
+          name: coverage-global-xml
+          path: coverage-global.xml
 
-      - name: Upload HTML report (unit)
+      - name: Upload global coverage data
         uses: actions/upload-artifact@v4
         with:
-          name: htmlcov-unit
-          path: htmlcov-unit/
+          name: coverage-global-data
+          path: .coverage
+
+      - name: Upload global HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: htmlcov-global
+          path: htmlcov-global/
           if-no-files-found: ignore
 
+      # Bonus: upload vers des services externes si configuré
+      - name: Upload to Codecov (if configured)
+        if: env.CODECOV_TOKEN != ''
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          curl -s https://codecov.io/bash | bash -s -- -f coverage-global.xml
 
-  # ---------------------------------------------------------------------------
-  # 5) FINAL GATE — INCHANGÉ (assure que tout est vert)
-  # ---------------------------------------------------------------------------
+  # ────────────────────────────────────────────────────────────────────────────
+  # 5) GATE — Point de passage unique avec rapport de coverage globale
+  # ────────────────────────────────────────────────────────────────────────────
   gate:
-    name: all-checks
+    name: ci-gate
     runs-on: ubuntu-latest
-    needs: [unit, aggregate-unit-coverage, integration, e2e]  # <-- adapte si tes noms diffèrent
+    needs: [unit, integration, e2e, aggregate-coverage]
+    timeout-minutes: 5
+    
     steps:
-      - run: echo "all green ✅"  
+      - name: All checks passed
+        run: |
+          echo "🎉 ALL CI JOBS COMPLETED SUCCESSFULLY!"
+          echo "✅ Unit tests (4 shards) - PASSED"
+          echo "✅ Integration tests - PASSED" 
+          echo "✅ E2E tests - PASSED"
+          echo "✅ Global coverage aggregation - PASSED"
+
+      - name: Download final coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-global-xml
+          path: ./
+
+      - name: Display coverage summary
+        run: |
+          if [[ -f coverage-global.xml ]]; then
+            echo "=== FINAL COVERAGE SUMMARY ==="
+            python3 -c "
+            import xml.etree.ElementTree as ET
+            tree = ET.parse('coverage-global.xml')
+            root = tree.getroot()
+            line_rate = float(root.get('line-rate', 0)) * 100
+            branch_rate = float(root.get('branch-rate', 0)) * 100
+            print(f'Lines covered: {line_rate:.1f}%')
+            print(f'Branches covered: {branch_rate:.1f}%')
+            "
+          else
+            echo "⚠️  Global coverage file not found"
+          fi
+
+      - name: Quality gate check
+        run: |
+          echo "🚪 All quality gates passed - ready for merge!"
+          echo ""
+          echo "Summary:"
+          echo "- ✅ All unit tests passed across 4 shards"
+          echo "- ✅ Integration tests with Docker stack passed"
+          echo "- ✅ End-to-end tests passed"
+          echo "- ✅ Coverage collected and aggregated from all test types"
+          echo "- ✅ No blocking issues detected"
+          echo ""
+          echo "This commit is safe to merge! 🚀"

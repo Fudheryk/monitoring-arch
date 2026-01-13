@@ -70,33 +70,38 @@ client = TestClient(app)
 
 def test_metrics_root_ok_empty():
     # DB n'est pas utilisé par l'endpoint root, mais on override l’auth
-    app.dependency_overrides[security.api_key_auth] = _auth_a
+    from app.presentation.api import deps
+    app.dependency_overrides[deps.api_key_auth] = _auth_a
     r = client.get("/api/v1/metrics")
     assert r.status_code == 200
     assert r.json() == {"items": [], "total": 0}
 
 def test_metrics_invalid_uuid_404():
-    app.dependency_overrides[security.api_key_auth] = _auth_a
+    from app.presentation.api import deps
+    app.dependency_overrides[deps.api_key_auth] = _auth_a
     r = client.get("/api/v1/metrics/not-a-uuid")
     assert r.status_code == 404
     assert r.json()["detail"] == "Machine not found"
 
 def test_metrics_machine_not_found_404():
-    app.dependency_overrides[security.api_key_auth] = _auth_a
+    from app.presentation.api import deps
+    app.dependency_overrides[deps.api_key_auth] = _auth_a
     app.dependency_overrides[get_db] = _db_override(_DBFake(machine=None))
     r = client.get(f"/api/v1/metrics/{uuid.uuid4()}")
     assert r.status_code == 404
     assert r.json()["detail"] == "Machine not found"
 
 def test_metrics_other_client_404():
-    app.dependency_overrides[security.api_key_auth] = _auth_a
+    from app.presentation.api import deps
+    app.dependency_overrides[deps.api_key_auth] = _auth_a
     app.dependency_overrides[get_db] = _db_override(_DBFake(machine=_FakeMachine(client_id=CLIENT_B)))
     r = client.get(f"/api/v1/metrics/{uuid.uuid4()}")
     assert r.status_code == 404
     assert r.json()["detail"] == "Machine not found"
 
 def test_metrics_happy_path_items_ordered():
-    app.dependency_overrides[security.api_key_auth] = _auth_a
+    from app.presentation.api import deps
+    app.dependency_overrides[deps.api_key_auth] = _auth_a
     rows = [
         _MetricRow(id=uuid.uuid4(), name="cpu", type_="gauge", unit="%", baseline=42.0, enabled=True),
         _MetricRow(id=uuid.uuid4(), name="mem", type_="gauge", unit="%", baseline=55.0, enabled=False),

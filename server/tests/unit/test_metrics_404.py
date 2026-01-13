@@ -1,3 +1,4 @@
+# server/tests/unit/test_metrics_404.py
 import uuid
 from types import SimpleNamespace
 

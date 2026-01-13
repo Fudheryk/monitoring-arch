@@ -11,9 +11,6 @@ from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.middleware import install_global_middleware
 
-
-
-
 app = FastAPI(title="Monitoring Server", version="0.2.1")
 
 allow_origins: List[str] = []

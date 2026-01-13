@@ -4,35 +4,80 @@ from __future__ import annotations
 Client settings.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.security import api_key_auth
+# Pour être ISO avec http-targets, utilise la même dépendance :
+from app.presentation.api.deps import api_key_auth
 from app.infrastructure.persistence.database.session import get_db
 from app.infrastructure.persistence.database.models.client_settings import ClientSettings
 
-router = APIRouter(prefix="/settings")
+from app.api.schemas.client_settings import ClientSettingsOut, ClientSettingsUpdate
+from app.api.v1.serializers.client_settings import serialize_client_settings
+
+router = APIRouter(prefix="/settings", tags=["settings"])
 
 
-@router.get("")
+def _get_or_create_settings(db: Session, client_id) -> ClientSettings:
+    """
+    Récupère les settings pour un client.
+    S'ils n'existent pas, les crée avec les defaults du modèle.
+    """
+    s = db.scalar(
+        select(ClientSettings).where(ClientSettings.client_id == client_id)
+    )
+    if s:
+        return s
+
+    # Création "lazy" avec defaults
+    s = ClientSettings(client_id=client_id)
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return s
+
+
+@router.get("", response_model=ClientSettingsOut)
 async def get_settings(
     api_key=Depends(api_key_auth),
     db: Session = Depends(get_db),
-) -> dict:
+) -> ClientSettingsOut:
     """
-    Retourne la configuration client si elle existe. Sinon un dict vide
-    (le smoke test ne vérifie que le status code).
+    Retourne la configuration client.
+    Si aucune ligne n'existe, on la crée avec les valeurs par défaut.
     """
-    s = db.scalar(select(ClientSettings).where(ClientSettings.client_id == api_key.client_id))
-    if not s:
-        return {}
+    s = _get_or_create_settings(db, api_key.client_id)
+    return ClientSettingsOut(**serialize_client_settings(s))
 
-    return {
-        "notification_email": s.notification_email,
-        "slack_webhook_url": s.slack_webhook_url,
-        "heartbeat_threshold_minutes": s.heartbeat_threshold_minutes,
-        "consecutive_failures_threshold": s.consecutive_failures_threshold,
-        "alert_grouping_enabled": s.alert_grouping_enabled,
-        "alert_grouping_window_seconds": s.alert_grouping_window_seconds,
-    }
+
+@router.put("", response_model=ClientSettingsOut)
+async def update_settings(
+    payload: ClientSettingsUpdate,
+    api_key=Depends(api_key_auth),
+    db: Session = Depends(get_db),
+) -> ClientSettingsOut:
+    """
+    Update partiel "idempotent" des settings client.
+
+    - Si aucune ligne n'existe encore → elle est créée avec les defaults,
+      puis les champs fournis sont appliqués.
+    - Sinon → on applique seulement les champs du payload.
+    """
+    s = _get_or_create_settings(db, api_key.client_id)
+
+    data = payload.model_dump(exclude_unset=True)
+    for field, value in data.items():
+        setattr(s, field, value)
+
+    try:
+        db.commit()
+        db.refresh(s)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to save client settings",
+        )
+
+    return ClientSettingsOut(**serialize_client_settings(s))

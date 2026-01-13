@@ -1,0 +1,108 @@
+from __future__ import annotations
+"""
+server/app/infrastructure/persistence/repositories/metric_repository.py
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Repository Metrics.
+
+Objectif :
+- Fournir un get_or_create(...) SIMPLE, idempotent.
+- Identifier une métrique par (machine_id, name, vendor).
+- Ne JAMAIS écraser une metric existante (type/flags), sauf compléter des champs
+  manquants (ex. unit/description None -> valeur fournie).
+- Laisser aux services (baseline, onboarding, etc.) le soin de fixer
+  `needs_threshold`, etc.
+"""
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.infrastructure.persistence.database.models.metric import Metric
+
+
+class MetricRepository:
+    def __init__(self, session: Session):
+        self.s = session
+
+    def get_or_create(
+        self,
+        machine_id,
+        name: str,
+        mtype: str,
+        group_name: str,
+        *,
+        vendor: str | None = None,
+        unit: str | None = None,
+        is_suggested_critical: bool | None = None,
+        description: str | None = None,
+    ) -> Metric:
+        """
+        Renvoie la Metric (créée si absente) pour (machine_id, name, vendor).
+
+        - `vendor` :
+            * None ou chaîne vide -> "builtin"
+            * fait partie de la clé logique (machine_id, name, vendor)
+              et correspond à l’unicité BDD.
+
+        - Si la metric existe :
+            * on NE modifie pas :
+                - type
+                - group_name
+                - vendor
+                - is_suggested_critical
+                - needs_threshold
+            * on COMPLÈTE :
+                - unit si elle était None et que `unit` est fourni
+                - description si elle était None et que `description` est fourni
+
+        - Si elle n’existe pas :
+            * on la crée avec :
+                - machine_id, name, type, group_name, vendor
+                - unit / is_suggested_critical / description si fournis
+            * `is_alerting_enabled`, `needs_threshold`, `is_paused` restent
+              sur leurs defaults définis par le modèle / la migration.
+        """
+
+        # Normalisation vendor : None / "" -> "builtin"
+        eff_vendor = (vendor or "builtin").strip() or "builtin"
+
+        obj = self.s.scalar(
+            select(Metric).where(
+                Metric.machine_id == machine_id,
+                Metric.name == name,
+                Metric.vendor == eff_vendor,
+            )
+        )
+        if obj:
+            # Compléter unit si manquante
+            if obj.unit is None and unit:
+                obj.unit = unit
+
+            # Compléter description si manquante
+            if obj.description is None and description:
+                obj.description = description
+
+            # On NE touche pas à :
+            # - obj.type
+            # - obj.group_name
+            # - obj.vendor
+            # - obj.is_suggested_critical
+            # - obj.needs_threshold
+            return obj
+
+        # Création : group_name est obligatoire (NOT NULL en BDD)
+        obj = Metric(
+            machine_id=machine_id,
+            name=name,
+            type=mtype,               # "numeric" / "boolean" / "string"
+            group_name=group_name,    # ex: "system", "security", "docker", ...
+            vendor=eff_vendor,        # "builtin" ou nom du vendor
+            unit=unit,
+            description=description,
+        )
+
+        # is_suggested_critical optionnel, sinon default=False du modèle/DB
+        if is_suggested_critical is not None:
+            obj.is_suggested_critical = bool(is_suggested_critical)
+
+        self.s.add(obj)
+        self.s.flush()  # pour disposer de obj.id immédiatement si besoin
+        return obj

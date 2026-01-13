@@ -33,7 +33,8 @@ class HttpTargetIn(BaseModel):
     - `url` : refus des schémas non http/https (ex: ftp://).
     - `method` : Enum => rejet automatique d’une valeur inconnue (ex: "FETCH").
                  Un pré-validateur met en majuscule les chaînes pour permettre "get" → "GET".
-    - `expected_status_code` : doit être un code HTTP valide (100..599).
+    - `accepted_status_codes` : liste de paires [début, fin] pour définir des ranges.
+      NULL = mode simple (tout code <500 accepté). Ex: [[200,299],[404,404]] = 2xx + 404 accepté.
     - `timeout_seconds` : borne raisonnable (1..120s).
     - `check_interval_seconds` : intervalle d’exécution (10s..24h).
     """
@@ -48,8 +49,11 @@ class HttpTargetIn(BaseModel):
     # Méthode HTTP restreinte à l’Enum. La valeur par défaut est GET.
     method: HTTPMethod = Field(default=HTTPMethod.GET, description="HTTP method")
 
-    # Code de statut attendu. 200 par défaut.
-    expected_status_code: int = Field(default=200, ge=100, le=599)
+    # Code de statut accepté.
+    accepted_status_codes: list[list[int]] | None = Field(
+        default=None,
+        description="List of accepted HTTP status code ranges. Example: [[200,299],[404,404]]. NULL = simple mode (<500)."
+    )
 
     # Délai d’attente de la requête.
     timeout_seconds: int = Field(default=30, ge=1, le=120)
@@ -90,7 +94,6 @@ class HttpTargetIn(BaseModel):
                 "name": "Example Target",
                 "url": "https://example.com/health",
                 "method": "GET",
-                "expected_status_code": 200,
                 "timeout_seconds": 10,
                 "check_interval_seconds": 60,
                 "is_active": True,

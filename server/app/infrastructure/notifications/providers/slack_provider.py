@@ -1,19 +1,18 @@
+# server/app/infrastructure/notifications/providers/slack_provider.py
 from __future__ import annotations
-"""server/app/infrastructure/notifications/providers/slack_provider.py
-~~~~~~~~~~~~~~~~~~~~~~~~
-SlackProvider — envoi de notifications via webhook Slack (Incoming Webhooks).
-"""
+"""SlackProvider — envoi de notifications via webhook Slack (Incoming Webhooks)."""
 
-import os
 from typing import Optional, Dict, Any
-
 import requests
 
 
 class SlackProvider:
     def __init__(self, webhook: Optional[str] = None):
-        # En tests unitaires, le provider est mocké ; sinon on lit l’ENV.
-        self.webhook = webhook or os.getenv("SLACK_WEBHOOK")
+        """
+        En prod, le webhook est injecté par la task Celery `notify` à partir
+        des ClientSettings. Aucun fallback global ici.
+        """
+        self.webhook = (webhook or "").strip()
         if not self.webhook:
             raise ValueError("Slack webhook URL must be provided")
 
@@ -28,11 +27,6 @@ class SlackProvider:
         username: Optional[str] = None,
         icon_emoji: Optional[str] = None,
     ) -> bool:
-        """
-        Envoie une notification Slack enrichie.
-        - `context` est mappé en fields façon attachments.
-        - Slack Incoming Webhooks renvoie généralement HTTP 200.
-        """
         payload = {
             "text": f"[{severity.upper()}] {title}",
             "attachments": [
@@ -44,9 +38,13 @@ class SlackProvider:
                 }
             ],
         }
-
         if channel:
-            payload["channel"] = channel
+            ch = channel.strip()
+            # Normalise: accepte "canal" ou "#canal"
+            if ch and not ch.startswith("#"):
+                ch = f"#{ch}"
+            if ch != "#":  # évite un channel vide déguisé
+                payload["channel"] = ch
         if username:
             payload["username"] = username
         if icon_emoji:
@@ -60,21 +58,17 @@ class SlackProvider:
                 timeout=5,
             )
             return r.status_code == 200
-        except Exception:
-            # Attrape TOUTE exception (pas uniquement RequestException) pour s’aligner avec les tests
+        except Exception:  # noqa: BLE001
             return False
 
     def _get_color(self, severity: str) -> str:
         colors = {
-            "info": "#36a64f",     # Vert
-            "warning": "#ffcc00",  # Jaune
-            "error": "#ff0000",    # Rouge
-            "critical": "#ff0000", # Mappe "critical" sur rouge
+            "info": "#36a64f",
+            "warning": "#ffcc00",
+            "error": "#ff0000",
+            "critical": "#ff0000",
         }
         return colors.get(severity.lower(), "#36a64f")
 
     def _format_context(self, context: Dict[str, Any]) -> list:
-        return [
-            {"title": key, "value": str(value), "short": True}
-            for key, value in context.items()
-        ]
+        return [{"title": k, "value": str(v), "short": True} for k, v in context.items()]

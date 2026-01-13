@@ -1,4 +1,3 @@
-# server/tests/e2e/test_e2e_incident_lifecycle.py
 from __future__ import annotations
 
 import os
@@ -6,11 +5,16 @@ import uuid
 import pytest
 import requests
 
+# ✅ IMPORTANT: ne pas réassigner pytestmark deux fois ; on cumule les marqueurs
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(os.getenv("E2E_STACK_UP") != "1",
+                       reason="E2E stack not running (export E2E_STACK_UP=1)"),
+]
+
 API = os.getenv("API", "http://localhost:8000")
 KEY = os.getenv("KEY", "dev-apikey-123")
 H = {"X-API-Key": KEY}
-
-pytestmark = pytest.mark.e2e
 
 
 def _targets_base() -> str:
@@ -56,7 +60,7 @@ def _targets_base() -> str:
     raise RuntimeError("Impossible de localiser la route des targets.")
 
 
-def _fake_http_get(url, method="GET", timeout=10):
+def _fake_http_get(url, method="GET", timeout=10):  # noqa: ARG001
     """Simule un DOWN systématique côté service."""
     class Resp:
         status_code = 500
@@ -64,7 +68,6 @@ def _fake_http_get(url, method="GET", timeout=10):
     return Resp()
 
 
-@pytest.mark.e2e
 def test_e2e_alert_flow_with_monkeypatch(monkeypatch):
     """
     E2E pragmatique :
@@ -87,8 +90,6 @@ def test_e2e_alert_flow_with_monkeypatch(monkeypatch):
     importlib.reload(cfg)
     importlib.reload(sess)
 
-    from app.application.services.http_monitor_service import check_http_targets
-
     # 1) route des targets
     base = _targets_base()  # ex: /api/v1/http-targets
 
@@ -105,16 +106,14 @@ def test_e2e_alert_flow_with_monkeypatch(monkeypatch):
     }
     r = requests.post(f"{API}{base}", json=payload, headers=H, timeout=5)
     if r.status_code in (200, 201):
-        tid = r.json()["id"]
+        tid = r.json()["id"]  # noqa: F841
     elif r.status_code == 409:
-        # La cible existe déjà : on réutilise son id
         tid = (r.json().get("detail") or {}).get("existing_id")
         assert tid, f"409 sans existing_id dans la réponse: {r.text}"
     else:
         raise AssertionError(f"POST {base} → {r.status_code}, body={r.text}")
 
     # 3) monkeypatch du HTTP interne + de la notification Celery
-    #    (afin d'éviter toute dépendance réseau et forcer un DOWN)
     monkeypatch.setattr(
         "app.application.services.http_monitor_service.http_get",
         _fake_http_get,
@@ -138,7 +137,6 @@ def test_e2e_alert_flow_with_monkeypatch(monkeypatch):
     assert updated >= 1, "Le service aurait dû checker au moins 1 cible"
 
     # 5) vérifie côté API qu’un incident a été ouvert
-    #    (plus stable que /alerts pour ce flux)
     inc = requests.get(f"{API}/api/v1/incidents", headers=H, timeout=5)
     assert inc.status_code == 200, f"GET /api/v1/incidents → {inc.status_code}"
     items = inc.json() or []

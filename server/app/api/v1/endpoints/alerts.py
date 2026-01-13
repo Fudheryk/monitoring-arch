@@ -42,7 +42,7 @@ async def list_alerts(
             {
                 "id": str(alert.id),
                 "machine_id": str(alert.machine_id) if alert.machine_id else None,
-                "metric_id": str(alert.metric_id) if alert.metric_id else None,
+                "metric_instance_id": str(alert.metric_instance_id) if alert.metric_instance_id else None,
                 "status": alert.status,
                 "severity": alert.severity,
                 "message": alert.message,

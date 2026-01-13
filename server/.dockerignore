@@ -1,0 +1,52 @@
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.mypy_cache
+.ruff_cache
+
+# IDEs
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Tests
+tests/
+*.test.py
+
+# Docs
+docs/
+*.md
+!README.md
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# CI
+.github
+.gitlab-ci.yml
+
+# Divers
+*.log
+tmp/
+temp/

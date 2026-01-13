@@ -55,22 +55,29 @@ def _sample_payload():
 # ---------- fixtures ----------
 
 @pytest.fixture(autouse=True)
-def override_api_key_auth(monkeypatch):
+def override_api_key_auth():
     """
-    Remplace la dépendance `api_key_auth` par un stub simple avec un client_id.
+    Remplace la dépendance d'auth obligatoire ET optionnelle par un stub.
+    Important: l’endpoint utilise `api_key_auth_optional`.
     """
     from app.core import security
+    from app.main import app
+    fake = SimpleNamespace(client_id=uuid.uuid4(), key="dev-apikey-123")
 
-    fake_key = SimpleNamespace(client_id=uuid.uuid4())
+    def _ok():
+        return fake  # sync OK
 
-    async def _fake_dep():
-        return fake_key
+    app.dependency_overrides[security.api_key_auth] = _ok
+    app.dependency_overrides[security.api_key_auth_optional] = _ok
 
-    app.dependency_overrides[security.api_key_auth] = _fake_dep
     try:
-        yield fake_key
+        yield _ok
     finally:
-        app.dependency_overrides.pop(security.api_key_auth, None)
+        for k in (
+            security.api_key_auth,
+            security.api_key_auth_optional,
+        ):
+            app.dependency_overrides.pop(k, None)
 
 
 @pytest.fixture()
@@ -105,7 +112,7 @@ def test_ingest_without_header_generates_id_and_calls_services(client, monkeypat
     monkeypatch.setattr(ingest_ep, "init_if_first_seen", fake_init_if_first_seen, raising=True)
     monkeypatch.setattr(ingest_ep, "enqueue_samples", fake_enqueue_samples, raising=True)
 
-    # Appel endpoint
+    # Appel endpoint (sans header X-Ingest-Id)
     payload = _sample_payload()
     r = client.post("/api/v1/ingest/metrics", json=payload)
     assert r.status_code == 202, r.text
@@ -113,22 +120,30 @@ def test_ingest_without_header_generates_id_and_calls_services(client, monkeypat
     assert data["status"] == "accepted"
     assert data["ingest_id"].startswith("auto-")
 
-    # Vérifs ensure_machine
+    # --- Vérifs ensure_machine -------------------------------------------------
     assert "ensure_machine" in recorded
     m_payload, api_key_obj = recorded["ensure_machine"]
-    assert _strip_nones(_dump_model(m_payload)) == _strip_nones(payload["machine"])
-    assert getattr(api_key_obj, "client_id") == override_api_key_auth.client_id
 
-    # Vérifs init_if_first_seen
+    # Le payload machine passé au service correspond à la requête
+    assert _strip_nones(_dump_model(m_payload)) == _strip_nones(payload["machine"])
+
+    # ⚠️ Ne pas tester l'identité avec la fixture (risque de double override conftest/module)
+    # On vérifie la structure et la cohérence de l'objet API key.
+    assert hasattr(api_key_obj, "client_id")
+    assert isinstance(getattr(api_key_obj, "client_id", None), uuid.UUID)
+    assert getattr(api_key_obj, "key", None) == "dev-apikey-123"
+
+    # --- Vérifs init_if_first_seen --------------------------------------------
     assert "init_if_first_seen" in recorded
     machine_obj, metrics_list = recorded["init_if_first_seen"]
     assert getattr(machine_obj, "id") == fake_machine_id
     assert _dump_metrics(metrics_list) == _dump_metrics(payload["metrics"])
 
-    # Vérifs enqueue_samples
+    # --- Vérifs enqueue_samples ------------------------------------------------
     assert "enqueue_samples" in recorded
     enq = recorded["enqueue_samples"]
-    assert enq["client_id"] == str(override_api_key_auth.client_id)
+    # Important : on compare avec **l'API key réellement utilisée par l'endpoint**
+    assert enq["client_id"] == str(getattr(api_key_obj, "client_id"))
     assert enq["machine_id"] == str(fake_machine_id)
     assert enq["ingest_id"] == data["ingest_id"]
     assert _dump_metrics(enq["metrics"]) == _dump_metrics(payload["metrics"])

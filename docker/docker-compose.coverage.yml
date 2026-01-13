@@ -1,6 +1,26 @@
+# docker/docker-compose.coverage.yml
+# Only coverage-related additions; use with: -f docker-compose.yml -f docker-compose.coverage.yml
 services:
+  api:
+    environment:
+      API_COVERAGE: "1"
+      COVERAGE_PROCESS_START: "/app/.coveragerc"
+      COVERAGE_FILE: "/app/server/.coverage.api"
+    volumes:
+      - ../.coveragerc:/app/.coveragerc:ro
+
   worker:
     environment:
-      COVERAGE_PROCESS_START: /app/.coveragerc
-      COVERAGE_FILE: /app/server/.coverage.worker
       WORKER_COVERAGE: "1"
+      COVERAGE_PROCESS_START: "/app/.coveragerc"
+      COVERAGE_FILE: "/app/server/.coverage.worker"
+    volumes:
+      - ../.coveragerc:/app/.coveragerc:ro
+
+  beat:
+    environment:
+      BEAT_COVERAGE: "1"
+      COVERAGE_PROCESS_START: "/app/.coveragerc"
+      COVERAGE_FILE: "/app/server/.coverage.beat"
+    volumes:
+      - ../.coveragerc:/app/.coveragerc:ro

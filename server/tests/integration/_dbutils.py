@@ -1,11 +1,12 @@
+# server/tests/integration/_dbutils.py
 # Outils communs pour les tests d'intégration (DB).
 # - require_db_or_skip() : skippe proprement si la DB d'intégration n'est pas joignable.
 
 from __future__ import annotations
 import os
-import contextlib
 import time
 import pytest
+
 
 def _dsn_candidates() -> list[str]:
     """
@@ -23,20 +24,18 @@ def _dsn_candidates() -> list[str]:
     cands.append("postgresql://postgres:postgres@localhost:5432/monitoring")
     return cands
 
+
 def _try_connect_psycopg(dsn: str) -> bool:
-    # On tente d'abord psycopg-binary, sinon psycopg (v3).
     try:
         import psycopg
-        try:
-            with psycopg.connect(dsn) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT 1;")
-                    cur.fetchone()
-            return True
-        except Exception:
-            return False
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1;")
+                cur.fetchone()
+        return True
     except Exception:
-        pass
+        return False
+
 
 def require_db_or_skip(wait_seconds: int = 0) -> None:
     """

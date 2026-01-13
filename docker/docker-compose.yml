@@ -1,58 +1,52 @@
 # docker/docker-compose.yml
-# ─────────────────────────────────────────────────────────────────────────────
-# Compose pour la stack d’intégration/dev.
-# Points clés :
-# - On lit désormais les variables via **../.env.docker** (et plus .env).
-# - Les services API/worker utilisent **db:5432** (réseau interne Docker).
-# - On expose 5432 vers l’hôte pour les tests d’intégration lancés en dehors
-#   des conteneurs (désactivez si non nécessaire).
-# - Les volumes de code sont montés pour le hot-reload / coverage en dev.
-#   En prod, ne montez PAS ces volumes (image immuable recommandée).
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Compose complet pour :
+# - db, redis
+# - api, worker, beat (+ job migrate)
+# - web (FastAPI SSR/Jinja, port 3000)
+# - proxy (Nginx unifiant / et /api) — optionnel
+# -----------------------------------------------------------------------------
 
 x-app-common: &app-common
   build:
-    context: ..                      # Contexte racine du projet
-    dockerfile: ./server/Dockerfile  # Dockerfile de l'app
-  env_file: ../.env.docker           # Fichier d'env dédié à Docker (renommé)
+    context: ..
+    dockerfile: ./server/Dockerfile.dev
+  env_file: ../.env.docker
   working_dir: /app/server
-  environment:
-    # Couche coverage activable à la demande (Makefile/CI)
-    # - API_COVERAGE / WORKER_COVERAGE pilotent l’entrypoint pour lancer via "coverage run"
-    # - COVERAGE_PROCESS_START pointe vers .coveragerc (auto-configuration)
-    # - COVERAGE_FILE indique où écrire le .coverage dans le conteneur
-    API_COVERAGE: "${API_COVERAGE:-}"
-    WORKER_COVERAGE: "${WORKER_COVERAGE:-}"
-    COVERAGE_PROCESS_START: "/app/.coveragerc"
-    COVERAGE_FILE: "${COVERAGE_FILE:-}"
-  # Volumes → utiles seulement en dev pour hot reload / couverture
-  # A ne pas monter en prod (image immuable recommandée)
   volumes:
-    - ../server:/app/server:cached    # Code de l’app
-    - ../.coveragerc:/app/.coveragerc:ro # Config coverage, lecture seule
-  depends_on:
-    db:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
+    - ../server:/app/server:cached
   restart: unless-stopped
 
 services:
+  migrate:
+    <<: *app-common
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   api:
     <<: *app-common
-    command: ["api"]                 # Voir /entrypoint.sh
+    command: ["api"]
     environment:
-      # Ces variables complètent/écrasent celles de env_file si nécessaire
-      API_COVERAGE: "${API_COVERAGE:-0}"
-      COVERAGE_RCFILE: "/app/.coveragerc"
-      # Forçage défensif : on parle au service "db" du réseau Docker
       DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       STUB_SLACK: "1"
-      ALERT_REMINDER_MINUTES: "1"
+      ALERT_REMINDER_MINUTES: "30"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
-    ports:
-      - "8000:8000"
+      CORS_ALLOW_ORIGINS: "https://monitoring.local"
+      LOG_LEVEL: DEBUG
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     stop_signal: SIGINT
     stop_grace_period: 20s
     healthcheck:
@@ -68,22 +62,51 @@ services:
   worker:
     <<: *app-common
     command: >
-      celery -A app.workers.celery_app.celery worker
-      --hostname=worker@%h
-      -Q ingest,evaluate,heartbeat,http,notify
-      -O fair -l info
-    # On garde un override explicite pour éviter tout fallback hôte
+      sh -lc "
+        alembic upgrade head &&
+        celery -A app.workers.celery_app.celery worker
+        -Q ingest,evaluate,heartbeat,http,notify,outbox
+        --hostname=worker@%h
+        -O fair -l debug
+      "
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
-      COVERAGE_PROCESS_START: /app/.coveragerc
-      COVERAGE_FILE: /app/server/.coverage.worker
-      WORKER_COVERAGE: "1"  # optionnel, utile juste comme “drapeau”
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      STUB_SLACK: "1"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+      ALERT_REMINDER_MINUTES: "30"
+      LOG_LEVEL: DEBUG
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     stop_grace_period: 30s
 
   beat:
     <<: *app-common
-    command: celery -A app.workers.celery_app.celery beat -l info
+    command: >
+      sh -lc "
+        alembic upgrade head &&
+        celery -A app.workers.celery_app.celery beat -l debug
+        --schedule /tmp/celerybeat-schedule
+      "
+    environment:
+      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
+      STUB_SLACK: "1"
+      PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
+      ALERT_REMINDER_MINUTES: "30"
+      LOG_LEVEL: DEBUG
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     stop_grace_period: 30s
 
   db:
@@ -98,7 +121,7 @@ services:
       timeout: 5s
       retries: 10
     ports:
-      - "5432:5432"   # Exposer pour les tests d’intégration côté hôte
+      - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -116,8 +139,67 @@ services:
       timeout: 5s
       retries: 10
     ports:
-      - "6379:6379"   # Retirez si l’accès direct depuis l’hôte est inutile
+      - "6379:6379"
     restart: unless-stopped
+
+  web:
+    build:
+      context: ../webapp
+      dockerfile: Dockerfile.dev
+    entrypoint: ""                 # pas d’entrypoint hérité du backend
+    working_dir: /app/webapp
+    command: ["uvicorn","app.main:app","--host","0.0.0.0","--port","3000","--reload"]
+    environment:
+      API_BASE_URL: "http://api:8000"
+      LOGIN_PATH: "/login"
+      PUBLIC_PATHS: "/login,/static,/_health,/health"
+      LOG_LEVEL: DEBUG
+    volumes:
+      - ../webapp:/app/webapp:cached
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/_health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  flaky:
+    build:
+      context: ./flaky
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:8081:80"
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - flaky.local
+          - flaky.test
+          - flaky.dev
+  
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # UI web
 
 volumes:
   pg_data:
