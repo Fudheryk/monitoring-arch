@@ -76,7 +76,7 @@ services:
   worker:
     <<: *app-common
     container_name: monitoring-worker
-    command: ["worker"]
+    command: ["celery", "-A", "app.workers.celery_app.celery", "worker", "-l", "info"]
     depends_on:
       db:
         condition: service_healthy
@@ -98,7 +98,7 @@ services:
   beat:
     <<: *app-common
     container_name: monitoring-beat
-    command: ["beat"]
+    command: ["celery", "-A", "app.workers.celery_app.celery", "beat", "-l", "info", "--schedule", "/tmp/celerybeat-schedule"]
     depends_on:
       db:
         condition: service_healthy
