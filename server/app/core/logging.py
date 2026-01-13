@@ -1,6 +1,9 @@
 # server/app/core/logging.py
 from __future__ import annotations
 import logging, os
+import json
+import sys
+
 
 def _level_from_env(default: int = logging.INFO) -> int:
     name = os.getenv("LOG_LEVEL", "").upper().strip()
@@ -8,27 +11,46 @@ def _level_from_env(default: int = logging.INFO) -> int:
         return default
     return getattr(logging, name, default)
 
+
 def setup_logging(level: int | str | None = None) -> None:
-    """
-    Configure le logging global.
-    - LOG_LEVEL dans l'env (DEBUG/INFO/WARNING/ERROR) si level=None
-    - force=True pour écraser toute config existante (handlers, niveaux)
-    """
     if isinstance(level, str):
         level = getattr(logging, level.upper(), logging.INFO)
     if level is None:
         level = _level_from_env(logging.INFO)
+    
+    # Format JSON en prod, texte en dev
+    env = os.getenv("ENVIRONMENT", "development")
+    
+    if env == "production":
+        # Format JSON pour parsing facile
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(JsonFormatter())
+        logging.basicConfig(
+            level=level,
+            handlers=[handler],
+            force=True,
+        )
+    else:
+        # Format texte lisible en dev
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s %(levelname)s %(name)s %(message)s",
+            force=True,
+        )
+    
+    # Réduire verbosité de librairies tierces en prod
+    if env == "production":
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+        logging.getLogger("celery.app.trace").setLevel(logging.INFO)
 
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        force=True,                     # <- clé pour tout écraser
-    )
-
-    # Harmonise quelques loggers fréquents
-    for name in (
-        "uvicorn", "uvicorn.access", "uvicorn.error",
-        "celery", "celery.app.trace",
-        "app",  # 👈 ajoute ceci pour forcer app.* en DEBUG
-    ):
-        logging.getLogger(name).setLevel(level)
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        log_data = {
+            "timestamp": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            log_data["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_data)

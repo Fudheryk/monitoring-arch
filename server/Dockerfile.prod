@@ -1,0 +1,56 @@
+# =============================================================================
+# Stage 1: Builder - Installation des dépendances
+# =============================================================================
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+# Installation des dépendances système minimales pour la compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copie et installation des dépendances Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# =============================================================================
+# Stage 2: Runtime - Image finale minimale
+# =============================================================================
+FROM python:3.11-slim
+
+WORKDIR /app/server
+
+# Installation des dépendances runtime uniquement
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Création d'un utilisateur non-root
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+
+# Copie des dépendances Python depuis le builder
+COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
+
+# Mise à jour du PATH pour l'utilisateur
+ENV PATH=/home/appuser/.local/bin:$PATH
+
+# Copie du code applicatif
+COPY --chown=appuser:appuser . .
+
+# Passage à l'utilisateur non-root
+USER appuser
+
+# Health check pour l'API (ignoré pour worker/beat)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+
+# Entrypoint pour gérer les différents modes (api/worker/beat)
+COPY --chown=appuser:appuser entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["api"]
