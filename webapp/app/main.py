@@ -419,7 +419,7 @@ async def fragment_events(request: Request):
     """
     ctx = {
         "request": request,
-        "version_cache_bust": VERSION_CACHE_BUST
+        "version_cache_bust": VERSION_CACHE_BUST,
         "events": [],
     }
 
