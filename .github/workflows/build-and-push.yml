@@ -2,28 +2,21 @@ name: Build and Push to Docker Hub
 
 on:
   push:
-    branches:
-      - main
-      - production
-    tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - main
+    branches: [main, production]
+    tags: ['v*']
 
 env:
   DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
   REGISTRY: docker.io
 
+permissions:
+  contents: read
+
 jobs:
-  # ===========================================================================
-  # Build et Push des images Docker
-  # ===========================================================================
   build-and-push:
     runs-on: ubuntu-latest
-    # Ne builder que sur push vers main/production ou sur tags
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/production' || startsWith(github.ref, 'refs/tags/v'))
-    
+    if: github.event_name == 'push'
+
     strategy:
       matrix:
         include:
@@ -37,9 +30,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -57,8 +47,7 @@ jobs:
           images: ${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}
           tags: |
             type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
@@ -68,89 +57,22 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache
           cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache,mode=max
-          platforms: linux/amd64
 
       - name: Image digest
-        run: echo ${{ steps.build.outputs.digest }}
+        run: echo "${{ steps.build.outputs.digest }}"
 
-
-  # ===========================================================================
-  # Build et Push des images Docker
-  # ===========================================================================
-  build-and-push:
-    needs: []
-    runs-on: ubuntu-latest
-    # Ne builder que sur push vers main/production ou sur tags
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/production' || startsWith(github.ref, 'refs/tags/v'))
-    
-    strategy:
-      matrix:
-        include:
-          - image: monitoring-api
-            context: ./server
-            dockerfile: ./server/Dockerfile.prod
-          - image: monitoring-web
-            context: ./webapp
-            dockerfile: ./webapp/Dockerfile.prod
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache
-          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache,mode=max
-          platforms: linux/amd64
-
-      - name: Image digest
-        run: echo ${{ steps.build.outputs.digest }}
-
-  # ===========================================================================
-  # Scan de sécurité des images
-  # ===========================================================================
   security-scan:
     needs: build-and-push
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
       matrix:
         image: [monitoring-api, monitoring-web]
-
     steps:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
@@ -166,9 +88,6 @@ jobs:
         with:
           sarif_file: 'trivy-results.sarif'
 
-  # ===========================================================================
-  # Notification (optionnel)
-  # ===========================================================================
   notify:
     needs: [build-and-push, security-scan]
     runs-on: ubuntu-latest
@@ -176,9 +95,5 @@ jobs:
     steps:
       - name: Send notification
         run: |
-          if [ "${{ needs.build-and-push.result }}" == "success" ]; then
-            echo "✓ Build et push réussis"
-            # TODO: Envoyer notification Slack/Email
-          else
-            echo "✗ Build ou push échoué"
-          fi
+          echo "build-and-push: ${{ needs.build-and-push.result }}"
+          echo "security-scan: ${{ needs.security-scan.result }}"
