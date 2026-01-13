@@ -113,7 +113,7 @@ async def list_machines(
     rows = db.scalars(
         select(Machine)
         .where(Machine.client_id == api_key.client_id)
-        .order_by(Machine.hostname)
+        .order_by(Machine.registered_at.asc().nullslast(), Machine.hostname.asc())
     ).all()
 
     # ------------------------------------------------------------

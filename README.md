@@ -374,4 +374,16 @@ curl -X POST http://localhost:8000/api/v1/ingest/metrics \
 - **Heartbeat :** 120s
 - **HTTP monitoring :** 300s
 
+## HTTPS en développement (local)
+
+Le projet est conçu pour être utilisé **exclusivement en HTTPS**, y compris en environnement de développement.
+
+Nous utilisons :
+- **Nginx** comme reverse-proxy
+- **mkcert** pour générer des certificats TLS locaux
+- un domaine local : `monitoring.local`
+
+➡️ Voir la documentation complète :
+📄 `docs/dev-https.md`
+
 Bon run ! 🎯

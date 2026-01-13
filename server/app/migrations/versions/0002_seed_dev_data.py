@@ -925,7 +925,7 @@ def upgrade():
             "cs_id": client_settings_id,
             "client_id": client_id,
             "notification_email": "frederic.gilgarcia@gmail.com",
-            "slack_webhook_url": "${SLACK_WEBHOOK_URL}",
+            "slack_webhook_url": (os.getenv("SLACK_WEBHOOK_URL") or "").strip() or None,
             "slack_channel_name": "#notif-webhook",
             "heartbeat_threshold_minutes": 5,
             "consecutive_failures_threshold": 2,

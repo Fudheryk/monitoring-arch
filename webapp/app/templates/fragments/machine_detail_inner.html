@@ -1,45 +1,52 @@
+{# webapp/app/templates/fragments/machine_detail_inner.html #}
 {# =============================================================================
-  fragments/machine_detail.html
-  Objectif : afficher les métriques par SECTIONS (= group_name)
-  - Titre du groupe en MAJUSCULES
-  - "misc" toujours en DERNIER
-  - (les services seront ajoutés APRÈS misc, dans un bloc séparé, plus bas)
-  Pré-requis : metric.group_name est présent dans le JSON (MetricDetailOut)
+  Machine detail INNER (includable)
+  - Contient UNIQUEMENT le layout "split" (aside + main) + métriques groupées
+  - Ne contient PAS le wrapper <section id="machines"> ni le titre global
+  - Dépend de :
+      all_machines, current_machine, metrics, services
 ============================================================================= #}
 
-<section id="machines">
-  <h2>🖥️ Serveurs</h2>
+<div class="machine-page" id="machine-view" data-machine-id="{{ current_machine.id if current_machine else '' }}">
 
-  <div class="machine-page" id="machine-view" data-machine-id="{{ current_machine.id }}">
-
-    <!-- ========================================================= -->
-    <!-- ASIDE : liste des machines                               -->
-    <!-- ========================================================= -->
-    <aside class="machines-aside">
+  <!-- ========================================================= -->
+  <!-- ASIDE : liste des machines                               -->
+  <!-- ========================================================= -->
+  <aside class="machines-aside">
+    {% if all_machines %}
       {% for m in all_machines %}
-      <button
-        type="button"
-        onclick="loadView('machine', '{{ m.id }}')"
-        data-machine-id="{{ m.id }}"
-        class="machine-button{% if m.id == current_machine.id %} active{% endif %}">
-        <span class="machine-name" title="{{ m.hostname }}" aria-label="{{ m.hostname }}">
-          {{ m.hostname }}
-        </span>
-
-        {# Badge incidents OPEN #}
-        {% if (m.open_incidents_count | default(0)) | int > 0 %}
-          <span class="pill incident-count">
-            {{ m.open_incidents_count }}
+        <button
+          type="button"
+          onclick="loadView('machine', '{{ m.id }}')"
+          data-machine-id="{{ m.id }}"
+          class="machine-button{% if current_machine and m.id == current_machine.id %} active{% endif %}">
+          <span class="machine-name" title="{{ m.hostname }}" aria-label="{{ m.hostname }}">
+            {{ m.hostname }}
           </span>
-        {% endif %}
-      </button>
-      {% endfor %}
-    </aside>
 
-    <!-- ========================================================= -->
-    <!-- MAIN : détail machine                                    -->
-    <!-- ========================================================= -->
-    <main class="machine-main" data-machine-id="{{ current_machine.id }}">
+          {# Badge incidents OPEN #}
+          {% if (m.open_incidents_count | default(0)) | int > 0 %}
+            <span class="pill incident-count">
+              {{ m.open_incidents_count }}
+            </span>
+          {% endif %}
+        </button>
+      {% endfor %}
+    {% else %}
+      <p class="no-results">Aucune machine.</p>
+    {% endif %}
+  </aside>
+
+  <!-- ========================================================= -->
+  <!-- MAIN : détail machine                                    -->
+  <!-- ========================================================= -->
+  <main class="machine-main" data-machine-id="{{ current_machine.id if current_machine else '' }}">
+
+    {% if not current_machine %}
+      <p class="no-results">Aucune machine sélectionnée.</p>
+      {# On stoppe ici si pas de machine #}
+    {% else %}
+
       <h2>
         {{ current_machine.hostname }}
         {% if current_machine.status %}
@@ -66,10 +73,10 @@
                  onchange="filterMetrics(); saveFiltersToCookie()">
           Actifs
         </label>
-    
+
         <label class="filter-checkbox">
           <input type="checkbox" id="showAdvanced"
-                onchange="filterMetrics(); saveFiltersToCookie()">
+                 onchange="filterMetrics(); saveFiltersToCookie()">
           Avancée
         </label>
       </div>
@@ -81,13 +88,11 @@
 
       {# -----------------------------------------------------------------------
          On groupe les métriques par group_name.
-         Jinja "groupby" va grouper en objets {grouper, list}.
-         IMPORTANT : "misc" doit être en dernier => on le met de côté via namespace.
+         IMPORTANT : "misc" doit être en dernier
       ------------------------------------------------------------------------ #}
       {% set ns = namespace(misc_group=None) %}
       {% set grouped = metrics | groupby('group_name') %}
 
-      {# Container global (plus une seule .grid, car chaque groupe a sa propre .grid) #}
       <div id="metricsGrid" data-ready="0">
 
         {# =====================================================
@@ -97,16 +102,13 @@
           {% set gname = (g.grouper | default('misc')) %}
 
           {% if gname == 'misc' %}
-            {# On stocke misc pour l'afficher à la fin #}
             {% set ns.misc_group = g %}
           {% else %}
             <section class="metric-group" data-group="{{ gname }}">
-              <!-- Titre du groupe en majuscules -->
               <h4 class="metric-group-title">{{ gname | upper | replace('_', ' ') }}</h4>
 
               <p class="no-results group-no-results">Aucune métrique</p>
 
-              <!-- Grille des cards de CE groupe -->
               <div class="grid">
                 <!-- Skeleton loader (visible only while metricsGrid data-ready="0") -->
                 <div class="card metric-card skeleton-card" aria-hidden="true">
@@ -119,11 +121,9 @@
                     <span class="skeleton-pill"></span>
                   </div>
                 </div>
+
                 {% for metric in g.list %}
 
-                  {# =========================
-                    Pré-calculs template
-                    ========================= #}
                   {% set last = metric.last_sample %}
                   {% set has_last = last is not none %}
                   {% set th = metric.default_threshold %}
@@ -137,13 +137,11 @@
                     'none'
                   %}
 
-                  {# Condition par défaut #}
                   {% set c = (th.condition if th_exists and th.condition else metric.default_condition) %}
                   {% if not c %}
                     {% set c = 'gt' if raw_type == 'number' else 'eq' %}
                   {% endif %}
 
-                  {# Valeur par défaut #}
                   {% if raw_type == 'number' %}
                     {% set default_val =
                       (th.value_num if th_exists and th.value_num is not none
@@ -164,15 +162,15 @@
                   {% set is_critical = is_no_data or is_breach %}
 
                   <div class="card metric-card {{ 'critical' if is_critical else '' }} {{ 'inactive' if not metric.is_alerting_enabled }}"
-                      data-search="{{ metric.name }}"
-                      data-suggested="{{ '1' if metric.is_suggested_critical else '0' }}"
-                      data-no-data="{{ '1' if is_no_data else '0' }}"
-                      data-breach="{{ '1' if is_breach else '0' }}"
-                      data-group="{{ metric.group_name }}"
-                      data-raw-type="{{ raw_type }}"
-                      data-raw-num="{{ last.num_value if has_last else '' }}"
-                      data-raw-bool="{{ '1' if has_last and last.bool_value else '0' }}"
-                      data-raw-str="{{ last.str_value if has_last else '' }}">
+                       data-search="{{ metric.name }}"
+                       data-suggested="{{ '1' if metric.is_suggested_critical else '0' }}"
+                       data-no-data="{{ '1' if is_no_data else '0' }}"
+                       data-breach="{{ '1' if is_breach else '0' }}"
+                       data-group="{{ metric.group_name }}"
+                       data-raw-type="{{ raw_type }}"
+                       data-raw-num="{{ last.num_value if has_last else '' }}"
+                       data-raw-bool="{{ '1' if has_last and last.bool_value else '0' }}"
+                       data-raw-str="{{ last.str_value if has_last else '' }}">
 
                     <!-- Header -->
                     <div class="card-header">
@@ -196,10 +194,10 @@
                               class="threshold-form">
                           <label class="switch small-switch">
                             <input type="checkbox"
-                                  name="alert_enabled"
-                                  value="1"
-                                  {% if metric.is_alerting_enabled %}checked{% endif %}
-                                  onchange="autoSave(this.form)">
+                                   name="alert_enabled"
+                                   value="1"
+                                   {% if metric.is_alerting_enabled %}checked{% endif %}
+                                   onchange="autoSave(this.form)">
                             <span class="slider"></span>
                           </label>
                         </form>
@@ -286,12 +284,12 @@
 
                           {% if raw_type == 'number' %}
                             <input type="text"
-                                  name="value_num"
-                                  value="{{ default_val }}"
-                                  class="pretty-input threshold"
-                                  inputmode="decimal"
-                                  oninput="enforceNumericOrDash(this)"
-                                  onchange="autoSave(this.form)">
+                                   name="value_num"
+                                   value="{{ default_val }}"
+                                   class="pretty-input threshold"
+                                   inputmode="decimal"
+                                   oninput="enforceNumericOrDash(this)"
+                                   onchange="autoSave(this.form)">
                           {% elif raw_type == 'bool' %}
                             <select name="value_bool"
                                     class="pretty-select"
@@ -301,10 +299,10 @@
                             </select>
                           {% else %}
                             <input type="text"
-                                  name="value_str"
-                                  value="{{ default_val }}"
-                                  class="pretty-input threshold"
-                                  onchange="autoSave(this.form)">
+                                   name="value_str"
+                                   value="{{ default_val }}"
+                                   class="pretty-input threshold"
+                                   onchange="autoSave(this.form)">
                           {% endif %}
 
                           {% if not th_exists %}
@@ -335,24 +333,21 @@
 
             <p class="no-results group-no-results">Aucune métrique</p>
 
-              <div class="grid">
-                <!-- Skeleton loader (visible only while metricsGrid data-ready="0") -->
-                <div class="card metric-card skeleton-card" aria-hidden="true">
-                  <div class="skeleton-line w-60"></div>
-                  <div class="skeleton-line w-40"></div>
-                  <div class="skeleton-line w-80"></div>
-                  <div class="skeleton-row">
-                    <span class="skeleton-pill"></span>
-                    <span class="skeleton-pill"></span>
-                    <span class="skeleton-pill"></span>
-                  </div>
+            <div class="grid">
+              <!-- Skeleton loader (visible only while metricsGrid data-ready="0") -->
+              <div class="card metric-card skeleton-card" aria-hidden="true">
+                <div class="skeleton-line w-60"></div>
+                <div class="skeleton-line w-40"></div>
+                <div class="skeleton-line w-80"></div>
+                <div class="skeleton-row">
+                  <span class="skeleton-pill"></span>
+                  <span class="skeleton-pill"></span>
+                  <span class="skeleton-pill"></span>
                 </div>
+              </div>
+
               {% for metric in ns.misc_group.list %}
 
-                {# =========================
-                  Pré-calculs template
-                  (identiques aux autres groupes)
-                  ========================= #}
                 {% set last = metric.last_sample %}
                 {% set has_last = last is not none %}
                 {% set th = metric.default_threshold %}
@@ -391,17 +386,16 @@
                 {% set is_critical = is_no_data or is_breach %}
 
                 <div class="card metric-card {{ 'critical' if is_critical else '' }} {{ 'inactive' if not metric.is_alerting_enabled }}"
-                    data-search="{{ metric.name }}"
-                    data-suggested="{{ '1' if metric.is_suggested_critical else '0' }}"
-                    data-no-data="{{ '1' if is_no_data else '0' }}"
-                    data-breach="{{ '1' if is_breach else '0' }}"
-                    data-group="{{ metric.group_name }}"
-                    data-raw-type="{{ raw_type }}"
-                    data-raw-num="{{ last.num_value if has_last else '' }}"
-                    data-raw-bool="{{ '1' if has_last and last.bool_value else '0' }}"
-                    data-raw-str="{{ last.str_value if has_last else '' }}">
+                     data-search="{{ metric.name }}"
+                     data-suggested="{{ '1' if metric.is_suggested_critical else '0' }}"
+                     data-no-data="{{ '1' if is_no_data else '0' }}"
+                     data-breach="{{ '1' if is_breach else '0' }}"
+                     data-group="{{ metric.group_name }}"
+                     data-raw-type="{{ raw_type }}"
+                     data-raw-num="{{ last.num_value if has_last else '' }}"
+                     data-raw-bool="{{ '1' if has_last and last.bool_value else '0' }}"
+                     data-raw-str="{{ last.str_value if has_last else '' }}">
 
-                  <!-- Header -->
                   <div class="card-header">
                     <div class="card-label-row">
                       <span class="info-icon"
@@ -415,7 +409,6 @@
                         {{ metric.name }}
                       </span>
 
-                      <!-- Toggle Alerte -->
                       <form method="post"
                             action="/webapi/metrics/{{ metric.id }}/alerting"
                             data-endpoint="alerting"
@@ -423,17 +416,16 @@
                             class="threshold-form">
                         <label class="switch small-switch">
                           <input type="checkbox"
-                                name="alert_enabled"
-                                value="1"
-                                {% if metric.is_alerting_enabled %}checked{% endif %}
-                                onchange="autoSave(this.form)">
+                                 name="alert_enabled"
+                                 value="1"
+                                 {% if metric.is_alerting_enabled %}checked{% endif %}
+                                 onchange="autoSave(this.form)">
                           <span class="slider"></span>
                         </label>
                       </form>
                     </div>
                   </div>
 
-                  <!-- Dernière valeur + âge -->
                   <div class="metric-last-value">
                     {% if has_last %}
                       {{ last.num_value
@@ -453,7 +445,6 @@
                     {% endif %}
                   </div>
 
-                  <!-- Meta -->
                   <div class="metric-meta">
                     {% if metric.is_alerting_enabled %}
                       <span class="pill state-on">Alerte 🔔</span>
@@ -478,7 +469,6 @@
                     {% endif %}
                   </div>
 
-                  <!-- Édition du seuil -->
                   <form method="post"
                         action="/webapi/metrics/{{ metric.id }}/thresholds/default"
                         data-endpoint="threshold"
@@ -513,12 +503,12 @@
 
                         {% if raw_type == 'number' %}
                           <input type="text"
-                                name="value_num"
-                                value="{{ default_val }}"
-                                class="pretty-input threshold"
-                                inputmode="decimal"
-                                oninput="enforceNumericOrDash(this)"
-                                onchange="autoSave(this.form)">
+                                 name="value_num"
+                                 value="{{ default_val }}"
+                                 class="pretty-input threshold"
+                                 inputmode="decimal"
+                                 oninput="enforceNumericOrDash(this)"
+                                 onchange="autoSave(this.form)">
                         {% elif raw_type == 'bool' %}
                           <select name="value_bool"
                                   class="pretty-select"
@@ -528,10 +518,10 @@
                           </select>
                         {% else %}
                           <input type="text"
-                                name="value_str"
-                                value="{{ default_val }}"
-                                class="pretty-input threshold"
-                                onchange="autoSave(this.form)">
+                                 name="value_str"
+                                 value="{{ default_val }}"
+                                 class="pretty-input threshold"
+                                 onchange="autoSave(this.form)">
                         {% endif %}
 
                         {% if not th_exists %}
@@ -557,9 +547,7 @@
 
       {# =====================================================
          SERVICES
-         - à placer APRÈS misc, donc ici.
-         - tu as déjà filterMetrics() qui gère .service-card / #noServicesFound.
-         - ici je laisse uniquement le "slot" (tu peux y mettre ton rendu actuel).
+         (slot conservé)
       ====================================================== #}
       {# 
       <h3>Services</h3>
@@ -574,6 +562,6 @@
       <p id="noServicesFound" class="no-results">Aucun service trouvé.</p>
       #}
 
-    </main>
-  </div>
-</section>
+    {% endif %}
+  </main>
+</div>

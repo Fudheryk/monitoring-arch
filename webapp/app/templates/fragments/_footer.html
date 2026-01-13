@@ -5,12 +5,12 @@
 
 <div id="global-saving-indicator">💾 Enregistrement...</div>
 
-{# Charge le JS uniquement si l’utilisateur est connecté (transmis via context) #}
-{% if user %}
+<!-- ✅ On charge toujours le JS : sinon loadView peut ne pas exister selon le contexte -->
 <script src="/static/js/timefmt.js?v={{ version_cache_bust }}"></script>
-<script src="/static/js/machines.js?v={{ version_cache_bust }}"></script>
 <script src="/static/js/sites.js?v={{ version_cache_bust }}"></script>
-<script src="/static/js/main.js?v={{ version_cache_bust }}"></script>
+<script src="/static/js/machines.js?v={{ version_cache_bust }}"></script>
 <script src="/static/js/events.js?v={{ version_cache_bust }}"></script>
 <script src="/static/js/settings.js?v={{ version_cache_bust }}"></script>
-{% endif %}
+
+<!-- ✅ main.js en dernier (il dépend des autres) -->
+<script src="/static/js/main.js?v={{ version_cache_bust }}"></script>

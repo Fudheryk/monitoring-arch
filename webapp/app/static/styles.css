@@ -967,50 +967,56 @@ footer {
 }
 
 /* Disposition principale */
-.machines-container {
-    display: flex;
-    gap: 2rem;
-    flex-wrap: wrap;
-    align-items: flex-start;
+
+/* Layout split Machines : aside à gauche, détail à droite */
+.machine-page{
+  display:flex;
+  gap:2rem;
+  align-items:flex-start;
 }
 
-.machines-aside{
-  flex: 0 0 200px; 
-  width: 200px;
-  max-width: 200px;
-  min-width: 0;
+/* Aside en colonne */
+.machine-page .machines-aside{
+  position:sticky;
+  top:200px;
+  align-self:flex-start;
+
+  flex:0 0 220px;
+  width:220px;
+  max-width:220px;
+
+  display:flex;
+  flex-direction:column;
+  gap:.5rem;
 }
 
-.machine-button{
-  width: 100%;
-  max-width: 100%;
-  display: flex;
-  align-items: center;
-  gap: .5rem;
+.machine-page .machine-main{
+  flex:1 1 auto;
+  min-width:0;
 }
 
-.machine-button.active {
-    font-weight: bold;
+.machine-page .machine-button{
+  width:100%;
+  display:flex;
+  align-items:center;
+  gap:.5rem;
 }
 
-.machine-button .machine-name{
-  flex: 1 1 auto;
-  min-width: 0;            /* clé pour ellipsis en flex */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.machine-page .machine-button .machine-name{
+  flex:1 1 auto;
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
 }
 
-.machine-main {
-    flex: 1;
-}
-
-@media (max-width: 768px){
-  .machines-container{ flex-direction: column; }
-  .machines-aside{
-    width: 100%;
-    max-width: none;
-    flex: 0 0 auto;
+@media (max-width:768px){
+  .machine-page{ flex-direction:column; }
+  .machine-page .machines-aside{
+    position:static;
+    width:100%;
+    max-width:none;
+    flex:0 0 auto;
   }
 }
 

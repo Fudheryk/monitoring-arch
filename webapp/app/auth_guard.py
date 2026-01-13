@@ -6,8 +6,14 @@ from app.config import get_settings
 import httpx, os
 from urllib.parse import urlencode
 
-API_BASE = os.getenv("API_BASE_URL", "http://api:8000")
+API_BASE = (os.getenv("API_BASE_URL") or "http://api:8000").strip()
+
+if "://" not in API_BASE:
+    API_BASE = "http://" + API_BASE
+
 ACCESS_COOKIE = get_settings().ACCESS_COOKIE
+
+print("[AUTH_GUARD] API_BASE =", API_BASE)
 
 def _same_path_with_flag(request: Request) -> str:
     qs = dict(request.query_params)

@@ -53,9 +53,10 @@ class MachineOut(BaseModel):
     os_type: Optional[str] = None
     os_version: Optional[str] = None
     last_seen: Optional[str] = None
-    registered_at: Optional[str] = None
-
-    status: str                           # <-- UP / DOWN
+    is_active: bool
+    registered_at: str
+    unregistered_at: Optional[str] = None
+    status: str  # UP / DOWN
 
 
 class MachineDetailResponse(BaseModel):

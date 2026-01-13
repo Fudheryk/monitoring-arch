@@ -347,7 +347,7 @@ function autoSave(form) {
    Search helpers (data-search)
 -----------------------------*/
 function getSearchText(card, fallbackSelector = "") {
-  // Prefer dedicated attribute produced by template (machine_detail.html)
+  // Prefer dedicated attribute produced by template (machine_detail_inner.html / machines.html)
   const ds = (card?.dataset?.search || "").trim();
   if (ds) return ds.toLowerCase();
 

@@ -14,6 +14,7 @@
           <option value="all" selected>Tous</option>
           <option value="incident">Incidents</option>
           <option value="notification">Notifications</option>
+          <option value="machine">Machines</option>
         </select>
 
         <label for="events-status-filter">Statut :</label>
@@ -29,6 +30,7 @@
           <option value="notif_warning">Warning</option>
           <option value="notif_error">Erreur</option>
           <option value="notif_critical">Critique</option>
+
         </select>
       </div>
 
@@ -69,25 +71,41 @@
           <tr class="event-row"
               data-index="{{ loop.index0 }}"
               data-kind="{{ ev.kind }}"
+              data-subkind="{{ ev.subkind if ev.kind == 'machine' else '' }}"
+              data-machine="{{ ev.machine_name if ev.machine_name else '' }}"
               data-provider="{{ ev.provider if ev.kind == 'notification' else '' }}"
-              data-status="{{ ev.status }}"
+              data-status="{{ ev.status or '' }}"
               data-severity="{{ ev.severity if ev.kind == 'notification' else '' }}">
             <td class="ev-date">
-            {# ISO complet en data-attr si un jour tu veux le JS #}
-                <span class="ev-date-full" data-ts="{{ ev.timestamp }}">
-                    {{ ev.timestamp[:10] }} {{ ev.timestamp[11:19] }}
-                </span>
-                <span class="ev-date-short">
-                    {{ ev.timestamp[:10] }}
-                </span>
+              {# ISO complet en data-attr si un jour tu veux le JS #}
+              <span class="ev-date-full" data-ts="{{ ev.timestamp or '' }}">
+                {% if ev.timestamp %}
+                  {{ ev.timestamp[:10] }} {{ ev.timestamp[11:19] }}
+                {% else %}
+                  —
+                {% endif %}
+              </span>
+              <span class="ev-date-short">
+                {% if ev.timestamp %}
+                  {{ ev.timestamp[:10] }}
+                {% else %}
+                  —
+                {% endif %}
+              </span>
             </td>
             <td class="ev-kind">
             {% if ev.kind == "incident" %}
-                <span class="ev-icon">🔥</span>
-                <span class="ev-label">Incident</span>
-            {% else %}
-                <span class="ev-icon">📣</span>
-                <span class="ev-label">Notif. ({{ ev.provider }})</span>
+              <span class="ev-icon">🔥</span>
+              <span class="ev-label">Incident</span>
+            {% elif ev.kind == "notification" %}
+              <span class="ev-icon">📣</span>
+              <span class="ev-label">Notif. ({{ ev.provider }})</span>
+            {% elif ev.kind == "machine" %}
+              <span class="ev-icon">🖥️</span>
+              <span class="ev-label">
+                Machine
+                {% if ev.subkind == "registered" %}(enregistrée){% elif ev.subkind == "unregistered" %}(désenregistrée){% endif %}
+              </span>
             {% endif %}
             </td>
             <td class="ev-main">
@@ -96,7 +114,13 @@
                   <strong>{{ ev.title }}</strong>
                 </div>
                 <div class="ev-description muted">
-                  Ouvert le {{ ev.timestamp[:10] }} {{ ev.timestamp[11:19] }}
+                  Ouvert le
+                  {% if ev.timestamp %}
+                    {{ ev.timestamp[:10] }} {{ ev.timestamp[11:19] }}
+                  {% else %}
+                    —
+                  {% endif %}
+
                   {% if ev.resolved_at %}
                     → Résolu le {{ ev.resolved_at[:10] }} {{ ev.resolved_at[11:19] }}
                     {% if ev.duration %}
@@ -109,7 +133,7 @@
                 {% if ev.description %}
                   <div class="ev-description muted">{{ ev.description }}</div>
                 {% endif %}
-              {% else %}
+              {% elif ev.kind == "notification" %}
                 <div class="ev-title">
                   <strong>{{ ev.recipient }}</strong>
                 </div>
@@ -118,11 +142,38 @@
                     {{ ev.message[:200] }}{% if ev.message|length > 200 %}…{% endif %}
                   </div>
                 {% endif %}
+              {% elif ev.kind == "machine" %}
+                <div class="ev-title">
+                  <strong>{{ ev.machine_name or ev.machine_id }}</strong>
+                </div>
+                <div class="ev-description muted">
+                  {% if ev.subkind == "registered" %}
+                    Enregistrée le
+                    {% if ev.timestamp %}
+                      {{ ev.timestamp[:10] }} {{ ev.timestamp[11:19] }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  {% elif ev.subkind == "unregistered" %}
+                    Désenregistrée le
+                    {% if ev.timestamp %}
+                      {{ ev.timestamp[:10] }} {{ ev.timestamp[11:19] }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  {% endif %}
+                </div>
               {% endif %}
             </td>
 
             <td class="ev-status">
-              {% if ev.kind == "incident" %}
+              {% if ev.kind == "machine" %}
+                {% if ev.subkind == "registered" %}
+                  <span class="badge badge-success">ENREGISTRÉE</span>
+                {% elif ev.subkind == "unregistered" %}
+                  <span class="badge badge-warning">DÉSENREGISTRÉE</span>
+                {% endif %}
+              {% elif ev.kind == "incident" %}
                 {% if ev.status == "ouvert" %}
                     <span class="badge badge-open">OUVERT</span>
                 {% elif ev.status == "resolu" %}

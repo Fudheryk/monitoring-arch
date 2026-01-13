@@ -1,4 +1,6 @@
 // events.js — gestion du fragment "Historique des événements"
+// Objectif : filtres + recherche + pagination côté client sur les lignes du tableau.
+// Supporte désormais : incident / notification / machine.
 
 console.log("📦 events.js chargé");
 
@@ -10,84 +12,109 @@ let eventsPageSize = 20;
 // Helpers
 // ──────────────────────────────
 
-// Retourne la liste des lignes filtrées selon les filtres actifs
+/**
+ * Convertit la "ligne" (row.dataset.*) en une valeur de statut normalisée
+ * qui matche exactement les <option value="..."> du select #events-status-filter.
+ *
+ * On ne renvoie une valeur "mappedStatus" QUE pour les types concernés :
+ * - incident      -> incident_open / incident_resolved
+ * - notification  -> notif_info / notif_warning / notif_error / notif_critical
+ * - machine       -> machine_registered / machine_unregistered (nouveau)
+ *
+ * Pour les autres cas : "" (aucun statut mappable)
+ */
+function mapRowStatus(row) {
+  const kind = (row.dataset.kind || "").toLowerCase();
+  const rawStatus = (row.dataset.status || "").toLowerCase();
+  const subkind = (row.dataset.subkind || "").toLowerCase();
+  const sev = (row.dataset.severity || "").toLowerCase();
+
+  // ---- INCIDENTS ----
+  // Dans ton HTML : data-status = "ouvert" / "resolu" (ou variants)
+  // NB: si un jour tu changes en "OPEN"/"RESOLVED", on accepte aussi.
+  if (kind === "incident") {
+    if (rawStatus === "open" || rawStatus === "ouvert") return "incident_open";
+    if (rawStatus === "resolved" || rawStatus === "resolu" || rawStatus === "résolu")
+      return "incident_resolved";
+    return "";
+  }
+
+  // ---- NOTIFICATIONS ----
+  // Dans ton HTML : data-severity = "info|warning|error|critical"
+  // On mappe vers les valeurs du select : notif_info, notif_warning, etc.
+  if (kind === "notification") {
+    if (sev === "info") return "notif_info";
+    if (sev === "warning") return "notif_warning";
+    if (sev === "error") return "notif_error";
+    if (sev === "critical") return "notif_critical";
+    return "";
+  }
+
+  // ---- MACHINES ----
+  // Dans ton HTML : data-kind="machine" + data-subkind="registered|unregistered"
+  if (kind === "machine") {
+    if (subkind === "registered") return "machine_registered";
+    if (subkind === "unregistered") return "machine_unregistered";
+    return "";
+  }
+
+  return "";
+}
+
+/**
+ * Retourne la liste des lignes filtrées selon les filtres actifs (type / statut / recherche).
+ */
 function getFilteredRows() {
   if (!eventsRows || eventsRows.length === 0) return [];
 
-  const kindFilter   = document.getElementById("events-kind-filter");
+  const kindFilter = document.getElementById("events-kind-filter");
   const statusFilter = document.getElementById("events-status-filter");
-  const searchInput  = document.getElementById("events-search");
+  const searchInput = document.getElementById("events-search");
 
-  const kindVal   = kindFilter   ? kindFilter.value   : "all";
+  const kindVal = kindFilter ? kindFilter.value : "all";
   const statusVal = statusFilter ? statusFilter.value : "all";
-  const searchVal = searchInput  ? searchInput.value.trim().toLowerCase() : "";
+  const searchVal = searchInput ? searchInput.value.trim().toLowerCase() : "";
 
   return eventsRows.filter((row) => {
-    const kind = (row.dataset.kind || "").toLowerCase();      // "incident" | "notification"
-    const rawStatus = (row.dataset.status || "").toLowerCase(); // "open"/"resolved" ou "info"/"warning"/...
+    const kind = (row.dataset.kind || "").toLowerCase();
+    const mappedStatus = mapRowStatus(row);
 
-    let mappedStatus = rawStatus;
+    // Filtre Type
+    if (kindVal !== "all" && kind !== kindVal) return false;
 
-    // ---- Mapping pour les INCIDENTS ----
-    // data-status vient de ev.status → "OPEN" / "RESOLVED"
-    if (kind === "incident") {
-      if (rawStatus === "open" || rawStatus === "ouvert") {
-        mappedStatus = "incident_open";
-      } else if (
-        rawStatus === "resolved" ||
-        rawStatus === "resolu" ||
-        rawStatus === "résolu"
-      ) {
-        mappedStatus = "incident_resolved";
-      }
+    // Filtre Statut
+    // Remarque : ton select "Statut" ne contient pour l’instant que incidents + notifications.
+    // Si tu ajoutes des options machine_*, ça fonctionnera directement.
+    if (statusVal !== "all") {
+      // Si la ligne n'a pas de statut mappable, on l'exclut quand un statut est demandé
+      if (!mappedStatus) return false;
+      if (mappedStatus !== statusVal) return false;
     }
 
-    // ---- Mapping pour les NOTIFICATIONS ----
-    // data-status = severity → "info" / "warning" / "error" / "critical"
-    if (kind === "notification") {
-      const sev = (row.dataset.severity || "").toLowerCase();
-      if (sev === "info") mappedStatus = "notif_info";
-      else if (sev === "warning") mappedStatus = "notif_warning";
-      else if (sev === "error") mappedStatus = "notif_error";
-      else if (sev === "critical") mappedStatus = "notif_critical";
-    }
-
-    // Filtre Type (incident / notification / tous)
-    if (kindVal !== "all" && kind !== kindVal) {
-      return false;
-    }
-
-    // Filtre Statut (avec les valeurs du select)
-    if (statusVal !== "all" && mappedStatus !== statusVal) {
-      return false;
-    }
-
-    // Recherche texte full-text
+    // Recherche full-text
     if (searchVal) {
-      const text = row.textContent.toLowerCase();
-      if (!text.includes(searchVal)) {
-        return false;
-      }
+      const text = (row.textContent || "").toLowerCase();
+      if (!text.includes(searchVal)) return false;
     }
 
     return true;
   });
 }
 
-// Met à jour l'info "Page X / Y"
+/**
+ * Met à jour l'info "Page X / Y"
+ */
 function updatePageInfo(page, total) {
   const info = document.getElementById("events-page-info");
-  if (info) {
-    info.textContent = `Page ${page} / ${total}`;
-  }
+  if (info) info.textContent = `Page ${page} / ${total}`;
 }
 
-// Met à jour le compteur "X résultat(s)" si tu as un span dédié
+/**
+ * Met à jour le compteur "X résultat(s)"
+ */
 function updateVisibleCount(count) {
   const visibleEl = document.getElementById("events-visible");
-  if (visibleEl) {
-    visibleEl.textContent = `${count} résultat(s)`;
-  }
+  if (visibleEl) visibleEl.textContent = `${count} résultat(s)`;
 }
 
 // ──────────────────────────────
@@ -112,12 +139,10 @@ function applyEventsPagination() {
 
   // Nombre de pages sur la base des lignes filtrées
   const totalPages = Math.max(1, Math.ceil(filtered.length / eventsPageSize));
-  if (eventsCurrentPage > totalPages) {
-    eventsCurrentPage = totalPages;
-  }
+  if (eventsCurrentPage > totalPages) eventsCurrentPage = totalPages;
 
   const start = (eventsCurrentPage - 1) * eventsPageSize;
-  const end   = start + eventsPageSize;
+  const end = start + eventsPageSize;
 
   // On cache tout
   eventsRows.forEach((row) => {
@@ -126,9 +151,7 @@ function applyEventsPagination() {
 
   // On affiche uniquement les lignes filtrées qui appartiennent à la page courante
   filtered.forEach((row, idx) => {
-    if (idx >= start && idx < end) {
-      row.style.display = "";
-    }
+    if (idx >= start && idx < end) row.style.display = "";
   });
 
   updatePageInfo(eventsCurrentPage, totalPages);
@@ -144,9 +167,7 @@ function bindEventsFragment() {
   if (!tbody) return; // on n'est pas sur la vue events
 
   // Éviter double-binding si loadView("events") est rappelé
-  if (tbody.dataset.eventsBound === "true") {
-    return;
-  }
+  if (tbody.dataset.eventsBound === "true") return;
   tbody.dataset.eventsBound = "true";
 
   console.log("🔧 events.js: binding pagination/filters sur le fragment events");
@@ -156,17 +177,17 @@ function bindEventsFragment() {
   eventsCurrentPage = 1;
 
   const pageSizeSelect = document.getElementById("events-page-size-select");
-  const prevBtn        = document.getElementById("events-prev");
-  const nextBtn        = document.getElementById("events-next");
-  const kindFilter     = document.getElementById("events-kind-filter");
-  const statusFilter   = document.getElementById("events-status-filter"); // optionnel
-  const searchInput    = document.getElementById("events-search");        // optionnel
+  const prevBtn = document.getElementById("events-prev");
+  const nextBtn = document.getElementById("events-next");
+  const kindFilter = document.getElementById("events-kind-filter");
+  const statusFilter = document.getElementById("events-status-filter");
+  const searchInput = document.getElementById("events-search");
 
   // Taille de page
   if (pageSizeSelect) {
     pageSizeSelect.addEventListener("change", () => {
       const val = parseInt(pageSizeSelect.value, 10);
-      eventsPageSize = isNaN(val) ? 20 : val;
+      eventsPageSize = Number.isFinite(val) ? val : 20;
       eventsCurrentPage = 1;
       applyEventsPagination();
     });
@@ -196,7 +217,7 @@ function bindEventsFragment() {
     });
   }
 
-  // Filtre type (incident / notification / tous)
+  // Filtre type (incident / notification / machine / tous)
   if (kindFilter) {
     kindFilter.addEventListener("change", () => {
       eventsCurrentPage = 1;
@@ -204,7 +225,9 @@ function bindEventsFragment() {
     });
   }
 
-  // Filtre statut (si présent dans le HTML)
+  // Filtre statut
+  // NB: ton HTML ne propose pas encore machine_registered/unregistered.
+  // Si tu ajoutes ces options, ce handler fonctionne déjà.
   if (statusFilter) {
     statusFilter.addEventListener("change", () => {
       eventsCurrentPage = 1;
@@ -212,7 +235,7 @@ function bindEventsFragment() {
     });
   }
 
-  // Recherche texte temps réel (si input présent)
+  // Recherche texte temps réel
   if (searchInput) {
     let searchDebounce = null;
     searchInput.addEventListener("input", () => {
@@ -220,13 +243,13 @@ function bindEventsFragment() {
       searchDebounce = setTimeout(() => {
         eventsCurrentPage = 1;
         applyEventsPagination();
-      }, 200); // petit debounce pour ne pas recalculer à chaque frappe
+      }, 200);
     });
   }
 
   // Page initiale : on lit la valeur du select ou 20 par défaut
   const initialVal = pageSizeSelect ? parseInt(pageSizeSelect.value, 10) : 20;
-  eventsPageSize = isNaN(initialVal) ? 20 : initialVal;
+  eventsPageSize = Number.isFinite(initialVal) ? initialVal : 20;
 
   applyEventsPagination();
 }

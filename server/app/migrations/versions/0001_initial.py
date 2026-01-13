@@ -78,6 +78,8 @@ def upgrade() -> None:
         sa.Column("os_version", sa.String(100), nullable=True),
         sa.Column("last_seen", TSTZ, nullable=True),
         sa.Column("registered_at", TSTZ, server_default=now_sql, nullable=False),
+        sa.Column("unregistered_at", TSTZ, server_default=now_sql, nullable=True),
+        sa.Column("is_active", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
         sa.Column("fingerprint", sa.String(128), nullable=True),
         sa.Column("status", sa.String(16), nullable=True),
         sa.ForeignKeyConstraint(["client_id"], ["clients.id"], ondelete="CASCADE"),

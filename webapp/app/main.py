@@ -177,11 +177,31 @@ async def login_submit(
 @login_required
 async def home(request: Request):
     user = getattr(request.state, "user", None)  # défini par le guard si présent
+
+    # ✅ Permet au dashboard de charger directement la 1ère machine (sans passer par /fragment/machines)
+    first_machine_id: str | None = None
+    try:
+        async with httpx.AsyncClient(base_url=API_BASE, timeout=10.0) as client:
+            r = await client.get(
+                "/api/v1/machines",
+                headers={"X-API-Key": _get_dev_api_key()},
+            )
+        if r.status_code == 200:
+            machines = r.json() or []
+            if machines and isinstance(machines, list):
+                mid = (machines[0] or {}).get("id")
+                if mid:
+                    first_machine_id = str(mid)
+    except httpx.RequestError:
+        # Pas bloquant : on fallback sur la vue "sites" côté JS
+        first_machine_id = None
+
     return templates.TemplateResponse(
         "dashboard.html",
         {
             "request": request,
             "user": user,
+            "first_machine_id": first_machine_id,
             "title": "NeonMonitor",
             "version_cache_bust": "dev",
         },
@@ -244,15 +264,11 @@ async def fragment_sites(request: Request):
 async def fragment_machines(request: Request):
     ctx = {"request": request, "version_cache_bust": "dev"}
 
+    # 1) Charger la liste
     try:
         async with httpx.AsyncClient(base_url=API_BASE, timeout=10.0) as client:
-            r = await client.get(
-                "/api/v1/machines",
-                headers={"X-API-Key": _get_dev_api_key()},
-            )
-            if r.status_code != 200:
-                logger.info("GET /api/v1/machines -> %s %s", r.status_code, r.text[:300])
-            machines = r.json() if r.status_code == 200 else []
+            r = await client.get("/api/v1/machines", headers={"X-API-Key": _get_dev_api_key()})
+        machines = r.json() if r.status_code == 200 else []
     except httpx.RequestError as exc:
         logger.error("Erreur httpx vers API /api/v1/machines : %s", exc)
         machines = []
@@ -260,33 +276,30 @@ async def fragment_machines(request: Request):
     if not machines:
         return templates.TemplateResponse("fragments/no_machine.html", ctx)
 
-    # ✅ Charge directement le détail de la première machine (évite un 303 qui casse fetch)
-    first_id = machines[0].get("id")
+    # 2) Charger le détail de la 1ère machine
+    first_id = (machines[0] or {}).get("id")
     if not first_id:
         return templates.TemplateResponse("fragments/no_machine.html", ctx)
 
     try:
         async with httpx.AsyncClient(base_url=API_BASE, timeout=10.0) as client:
-            detail = await client.get(
-                f"/api/v1/machines/{first_id}/detail",
-                headers={"X-API-Key": _get_dev_api_key()},
-            )
-
+            detail = await client.get(f"/api/v1/machines/{first_id}/detail", headers={"X-API-Key": _get_dev_api_key()})
         if detail.status_code != 200:
-            logger.info("GET /machines/%s/detail -> %s %s", first_id, detail.status_code, detail.text[:300])
             return templates.TemplateResponse("fragments/no_machine.html", ctx)
 
-        payload = detail.json()
-        ctx["all_machines"] = machines
-        ctx["current_machine"] = payload.get("machine")
-        ctx["metrics"] = payload.get("metrics", [])
-        ctx["services"] = []
-        return templates.TemplateResponse("fragments/machine_detail.html", ctx)
-
+        payload = detail.json() or {}
     except httpx.RequestError as exc:
         logger.error("Erreur httpx vers machine detail : %s", exc)
         return templates.TemplateResponse("fragments/no_machine.html", ctx)
 
+    # 3) Contexte complet pour une page "split"
+    ctx["all_machines"] = machines
+    ctx["current_machine"] = payload.get("machine")
+    ctx["metrics"] = payload.get("metrics") or []
+    ctx["services"] = payload.get("services") or []
+
+    # ✅ important : on rend machines.html (et plus machine_detail.html)
+    return templates.TemplateResponse("fragments/machines.html", ctx)
 
 @app.get("/fragment/machine/{machine_id}", response_class=HTMLResponse)
 @login_required
@@ -303,6 +316,7 @@ async def fragment_machine_detail(request: Request, machine_id: str):
                 "/api/v1/machines",
                 headers={"X-API-Key": _get_dev_api_key()},
             )
+
             machines = machines_resp.json() if machines_resp.status_code == 200 else []
 
             detail_resp = await client.get(
@@ -323,9 +337,9 @@ async def fragment_machine_detail(request: Request, machine_id: str):
     ctx["all_machines"] = machines
     ctx["current_machine"] = detail.get("machine")
     ctx["metrics"] = detail.get("metrics", [])
-    ctx["services"] = []
+    ctx["services"] = detail.get("services") or []
 
-    return templates.TemplateResponse("fragments/machine_detail.html", ctx)
+    return templates.TemplateResponse("fragments/machine_detail_inner.html", ctx)
 
 
 @app.get("/fragment/settings", response_class=HTMLResponse)
@@ -398,19 +412,21 @@ async def fragment_events(request: Request):
 
     try:
         async with httpx.AsyncClient(base_url=API_BASE, timeout=10.0) as client:
-            incidents_resp, notif_resp = await asyncio.gather(
-                client.get(
-                    "/api/v1/incidents",
-                    headers={"X-API-Key": _get_dev_api_key()},
-                ),
-                client.get(
-                    "/api/v1/notifications",
-                    headers={"X-API-Key": _get_dev_api_key()},
-                ),
+            incidents_resp, notif_resp, machines_resp = await asyncio.gather(
+                client.get("/api/v1/incidents", headers={"X-API-Key": _get_dev_api_key()}),
+                client.get("/api/v1/notifications", headers={"X-API-Key": _get_dev_api_key()}),
+                client.get("/api/v1/machines", headers={"X-API-Key": _get_dev_api_key()}),
             )
 
         incidents = incidents_resp.json() if incidents_resp.status_code == 200 else []
         notifs = notif_resp.json() if notif_resp.status_code == 200 else []
+        machines = machines_resp.json() if machines_resp.status_code == 200 else []
+
+        machine_name_by_id = {
+            m.get("id"): (m.get("hostname") or m.get("id"))
+            for m in machines
+            if m.get("id")
+        }
 
         # On construit une liste d'évènements unifiés
         events: list[dict] = []
@@ -435,6 +451,7 @@ async def fragment_events(request: Request):
                     "status": "ouvert" if inc["status"] == "OPEN" else "resolu",
                     "severity": inc["severity"],
                     "machine_id": inc.get("machine_id"),
+                    "machine_name": machine_name_by_id.get(inc.get("machine_id")),
                     "resolved_at": inc.get("resolved_at"),
                     "duration": _human_duration(duration_sec),
                     "description": inc.get("description"),  # si tu l’ajoutes dans l’endpoint
@@ -462,6 +479,42 @@ async def fragment_events(request: Request):
                 }
             )
         
+        for m in machines:
+            mid = m.get("id")
+            if not mid:
+                continue
+
+            hostname = m.get("hostname") or mid
+            reg = m.get("registered_at")
+            unreg = m.get("unregistered_at")
+            is_active = bool(m.get("is_active", True))
+
+            if reg:
+                events.append({
+                    "kind": "machine",
+                    "subkind": "registered",
+                    "id": f"{mid}:registered",
+                    "timestamp": reg,
+                    "title": f"Machine enregistrée : {hostname}",
+                    "machine_id": mid,
+                    "machine_name": hostname,
+                    "status": "info",
+                    "severity": "info",
+                })
+
+            # Désenregistrement : montre-le seulement si la machine est inactive (ou si tu veux toujours l’afficher)
+            if unreg and (not is_active):
+                events.append({
+                    "kind": "machine",
+                    "subkind": "unregistered",
+                    "id": f"{mid}:unregistered",
+                    "timestamp": unreg,
+                    "title": f"Machine désenregistrée : {hostname}",
+                    "machine_id": mid,
+                    "machine_name": hostname,
+                    "status": "info",
+                    "severity": "warning",
+                })
 
 
         # Tri déchronologique (timestamp ISO → OK pour trier en string)
