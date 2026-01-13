@@ -5,7 +5,7 @@ Vérifie qu'une alerte est envoyée une première fois puis ignorée immédiatem
 
 Notes :
 - Marqué @unit => active les fixtures unitaires de server/tests/conftest.py
-  (DB SQLite partagée, Celery en eager, SlackProvider mocké, patch get_sync_session, etc.).
+  (DB SQLite partagée, Celery en eager, SlackProvider mocké, patch open_session, etc.).
 - Imports "tardifs" à l'intérieur du test pour garantir que les patches sont en place.
 """
 

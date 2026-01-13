@@ -27,7 +27,6 @@ base='{
   "name":"Temp via script",
   "url":"__URL__",
   "method":"GET",
-  "expected_status_code":200,
   "timeout_seconds":10,
   "check_interval_seconds":60,
   "is_active":true

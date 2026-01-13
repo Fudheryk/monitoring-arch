@@ -1,0 +1,22 @@
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+
+# IDEs
+.vscode
+.idea
+*.swp
+
+# Env
+.env
+.env.*
+
+# Git
+.git
+.gitignore
+
+# Docs
+*.md

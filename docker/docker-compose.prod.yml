@@ -1,0 +1,293 @@
+# =============================================================================
+# Docker Compose - PRODUCTION
+# =============================================================================
+# Utilise des images depuis Docker Hub Registry
+# Optimisé pour serveur 1.5 GB RAM / 2 CPU / 15 GB disque
+# =============================================================================
+
+x-app-common: &app-common
+  image: ${DOCKER_USERNAME}/monitoring-api:${VERSION:-latest}
+  env_file: ../.env.production
+  working_dir: /app/server
+  restart: always
+  networks:
+    - monitoring-net
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+  deploy:
+    resources:
+      limits:
+        memory: 200M
+      reservations:
+        memory: 100M
+
+services:
+  # ---------------------------------------------------------------------------
+  # Migration Job (one-off)
+  # ---------------------------------------------------------------------------
+  migrate:
+    <<: *app-common
+    container_name: monitoring-migrate
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 150M
+
+  # ---------------------------------------------------------------------------
+  # API Backend
+  # ---------------------------------------------------------------------------
+  api:
+    <<: *app-common
+    container_name: monitoring-api
+    command: ["api"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    stop_signal: SIGINT
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 250M
+        reservations:
+          memory: 150M
+
+  # ---------------------------------------------------------------------------
+  # Celery Worker
+  # ---------------------------------------------------------------------------
+  worker:
+    <<: *app-common
+    container_name: monitoring-worker
+    command: ["worker"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 150M
+
+  # ---------------------------------------------------------------------------
+  # Celery Beat Scheduler
+  # ---------------------------------------------------------------------------
+  beat:
+    <<: *app-common
+    container_name: monitoring-beat
+    command: ["beat"]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 150M
+        reservations:
+          memory: 80M
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: monitoring-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: monitoring
+      # Optimisation mémoire pour petit serveur
+      POSTGRES_SHARED_BUFFERS: 128MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 512MB
+      POSTGRES_WORK_MEM: 4MB
+      POSTGRES_MAINTENANCE_WORK_MEM: 64MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d monitoring"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: always
+    networks:
+      - monitoring-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 200M
+
+  # ---------------------------------------------------------------------------
+  # Redis
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: monitoring-redis
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 100mb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --appendonly yes
+      --appendfsync everysec
+    healthcheck:
+      test: ["CMD", "redis-cli", "--pass", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+    restart: always
+    networks:
+      - monitoring-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          memory: 120M
+        reservations:
+          memory: 80M
+
+  # ---------------------------------------------------------------------------
+  # Web Frontend (FastAPI SSR)
+  # ---------------------------------------------------------------------------
+  web:
+    image: ${DOCKER_USERNAME}/monitoring-web:${VERSION:-latest}
+    container_name: monitoring-web
+    environment:
+      API_BASE_URL: "http://api:8000"
+      LOGIN_PATH: "/login"
+      PUBLIC_PATHS: "/login,/static,/_health,/health"
+      LOG_LEVEL: INFO
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/_health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: always
+    networks:
+      - monitoring-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 150M
+        reservations:
+          memory: 80M
+
+  # ---------------------------------------------------------------------------
+  # Nginx Reverse Proxy
+  # ---------------------------------------------------------------------------
+  proxy:
+    image: nginx:alpine
+    container_name: monitoring-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      - certbot_data:/var/www/certbot:ro
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: always
+    networks:
+      - monitoring-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    deploy:
+      resources:
+        limits:
+          memory: 50M
+
+  # ---------------------------------------------------------------------------
+  # Certbot pour Let's Encrypt (renouvellement auto)
+  # ---------------------------------------------------------------------------
+  certbot:
+    image: certbot/certbot:latest
+    container_name: monitoring-certbot
+    volumes:
+      - ./certs:/etc/letsencrypt
+      - certbot_data:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    restart: always
+    networks:
+      - monitoring-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "2m"
+        max-file: "1"
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  pg_data:
+    driver: local
+  redis_data:
+    driver: local
+  certbot_data:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  monitoring-net:
+    driver: bridge

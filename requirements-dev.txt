@@ -6,6 +6,7 @@ ruff
 sqlalchemy
 pydantic-settings
 pytest
+pytest-env
 pytest-cov>=4.1
 pytest-dotenv>=0.5.2
 pytest-randomly>=3.15

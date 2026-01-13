@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="fr">
+{% include "fragments/_head.html" %}
+<body>
+  <div class="login-wrapper">
+    <div class="login-box">
+      <header><h1>NeonMonitor</h1></header>
+      <h2 class="login-title">🔐 Connexion</h2>
+
+      {% if error %}
+        <div class="error-msg">{{ error }}</div>
+      {% endif %}
+
+      <form method="POST" action="{{ request.app.url_path_for('login') }}" class="login-form">
+
+        <div class="input-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" placeholder="Email" value="admin@example.com" required>
+        </div>
+
+        <div class="input-group">
+          <label for="password">Mot de passe</label>
+          <input type="password" id="password" name="password" placeholder="Mot de passe" value="admin" required>
+        </div>
+
+        <button type="submit" class="login-btn">Connexion</button>
+      </form>
+
+    </div>
+  </div>
+</body>
+</html>

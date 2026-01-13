@@ -29,7 +29,7 @@ class AlertRepository:
         *,
         threshold_id,
         machine_id,
-        metric_id,
+        metric_instance_id,
         severity,
         message,
         current_value
@@ -40,7 +40,7 @@ class AlertRepository:
         Args:
             threshold_id: ID du seuil déclencheur
             machine_id: ID de la machine concernée
-            metric_id: ID de la métrique (conservé pour compatibilité)
+            metric_instance_id: ID de la métrique (conservé pour compatibilité)
             severity: Niveau de sévérité
             message: Message d'alerte
             current_value: Valeur actuelle ayant déclenché l'alerte
@@ -56,6 +56,7 @@ class AlertRepository:
             select(Alert).where(
                 Alert.threshold_id == threshold_id,
                 Alert.machine_id == machine_id,
+                Alert.metric_instance_id == metric_instance_id,
                 Alert.status == AlertStatus.FIRING,
             ).limit(1)
         )
@@ -81,7 +82,7 @@ class AlertRepository:
             id=uuid.uuid4(),
             threshold_id=threshold_id,
             machine_id=machine_id,
-            metric_id=metric_id,
+            metric_instance_id=metric_instance_id,
             status=AlertStatus.FIRING,
             current_value=current_value_str,
             message=message,
@@ -119,6 +120,44 @@ class AlertRepository:
         try:
             result = self.s.execute(stmt)
             # Optionnel : ne pas commit ici si un UoW/Service gère la transaction
+            return result.rowcount or 0
+        except SQLAlchemyError:
+            self.s.rollback()
+            raise
+
+    def resolve_open_for_threshold_instance(
+        self,
+        threshold_id,
+        machine_id,
+        metric_instance_id,
+        *,
+        now: dt.datetime | None = None,
+    ) -> int:
+        """
+        Résout l'alerte (ou les alertes) ouverte(s) pour un triplet
+        (threshold_id, machine_id, metric_instance_id).
+
+        ⚠️ IMPORTANT : évite de résoudre toutes les machines.
+        """
+        if now is None:
+            now = dt.datetime.now(dt.timezone.utc)
+
+        stmt = (
+            update(Alert)
+            .where(
+                Alert.threshold_id == threshold_id,
+                Alert.machine_id == machine_id,
+                Alert.metric_instance_id == metric_instance_id,
+                Alert.status == AlertStatus.FIRING,
+            )
+            .values(
+                status=AlertStatus.RESOLVED,
+                resolved_at=now,
+            )
+        )
+
+        try:
+            result = self.s.execute(stmt)
             return result.rowcount or 0
         except SQLAlchemyError:
             self.s.rollback()

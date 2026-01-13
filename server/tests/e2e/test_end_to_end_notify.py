@@ -6,8 +6,10 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 # Skip propre si la stack n'est pas démarrée
-if not os.getenv("E2E_STACK_UP"):
-    pytest.skip("E2E stack not running (export E2E_STACK_UP=1)", allow_module_level=True)
+pytestmark = pytest.mark.skipif(
+    not os.getenv("E2E_STACK_UP"),
+    reason="E2E stack not running (export E2E_STACK_UP=1)",
+)
 
 REQUEST_TIMEOUT = 10
 HEALTH_TIMEOUT = 30

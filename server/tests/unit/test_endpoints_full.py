@@ -231,6 +231,8 @@ def test_settings_empty_then_present(Session):
                 consecutive_failures_threshold=3,
                 alert_grouping_enabled=True,
                 alert_grouping_window_seconds=120,
+                reminder_notification_seconds=600,
+                failures_before_alert=10,
             )
             s.commit()
 
@@ -246,6 +248,8 @@ def test_settings_empty_then_present(Session):
                 "consecutive_failures_threshold",
                 "alert_grouping_enabled",
                 "alert_grouping_window_seconds",
+                "reminder_notification_seconds",
+                "failures_before_alert",
             }
             assert js["notification_email"] == "ops@example.test"
             assert js["heartbeat_threshold_minutes"] == 10

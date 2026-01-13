@@ -1,54 +1,92 @@
-# Environnements virtuels
+# =============================================================================
+# Python / Virtualenv
+# =============================================================================
 .venv/
 venv/
+.venv-ci/
 
-# Python caches
+# =============================================================================
+# Python bytecode / caches
+# =============================================================================
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
 **/*.egg-info/
 
-# Tests / coverage artefacts
+# =============================================================================
+# Tests / Coverage / Reports
+# =============================================================================
 .pytest_cache/
 .coverage
 .coverage.*
-server/.coverage*
-docker/.coverage
 coverage.xml
 htmlcov/
+# Coverage générée côté server (si tu la mets là)
+server/.coverage*
+# Coverage générée côté docker / compose
+docker/.coverage
+# Si ton projet peut créer un .coveragerc local dans server
 server/.coveragerc
 
-# Outils d'analyse statique
+# =============================================================================
+# Static analysis / Linters
+# =============================================================================
 .mypy_cache/
 .dmypy.json
 .pyre/
 .pytype/
-.ruff_cache
+.ruff_cache/
 
-# Build / distribution
+# =============================================================================
+# Build / Distribution
+# =============================================================================
 dist/
 build/
 
-# Fichiers sensibles (ne jamais pousser)
+# =============================================================================
+# Secrets / Environment files (ne jamais pousser)
+# =============================================================================
 .env
 .env.*
 !.env.example
 .env.integration.local
 
+# =============================================================================
 # IDE / OS
+# =============================================================================
 .vscode/
 .idea/
 .DS_Store
 .python-version
 .tox/
 
-# Docker
+# =============================================================================
+# Docker / Local TLS
+# =============================================================================
 docker/docker-compose.override.yml
 docker/.env.docker
 
-# Celery
-server/celerybeat-schedule
+# Certificats locaux TLS (mkcert) — NE JAMAIS pousser
+docker/certs/*
+!docker/certs/.gitkeep
 
-# local venv
-.venv-ci/
-.venv-ci/
+# =============================================================================
+# Celery / Runtime state
+# =============================================================================
+server/celerybeat-schedule
+celerybeat-schedule
+*.pid
+
+# =============================================================================
+# Local runtime artifacts (à ne pas versionner)
+# =============================================================================
+# Logs générés localement (ex: scenario_matrix_*.log)
+logs/
+
+# DB locale (si SQLite utilisée en dev / tests)
+app.db
+*.sqlite
+*.sqlite3
+
+# Fichiers utilitaires locaux
+cookies.txt

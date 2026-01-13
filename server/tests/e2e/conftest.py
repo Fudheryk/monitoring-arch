@@ -3,20 +3,20 @@
 # Conftest E2E MINIMAL :
 # - Ne redéclare PAS d’options pytest (--api / --api-key).
 # - Ne duplique PAS les fixtures communes (api_base, api_headers,
-#   session_retry, wait) : elles viennent du conftest GLOBAL
-#   => server/tests/conftest.py
-# - Pose uniquement un défaut pour le garde-fou E2E_STACK_UP afin
-#   d'éviter les SKIP en local quand la stack tourne déjà.
+#   session_retry, wait) : elles viennent du conftest GLOBAL.
+# - IMPORTANT : Par défaut, on n'active PAS l'E2E. Il faut exporter
+#   E2E_STACK_UP=1 quand la stack est UP, sinon les tests E2E sont SKIP.
 # -------------------------------------------------------------------
 
-from __future__ import annotations
 
-import os
-import pytest
+# from __future__ import annotations
+
+# import os
+# import pytest
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _set_e2e_env_defaults() -> None:
-    # Laisse la CI/ton shell surcharger si besoin.
-    # Par défaut on *active* le flag en E2E pour éviter les SKIP.
-    os.environ.setdefault("E2E_STACK_UP", os.getenv("E2E_STACK_UP", "1"))
+# @pytest.fixture(scope="session", autouse=True)
+# def _set_e2e_env_defaults() -> None:
+#     # Par défaut on laisse l'E2E désactivé (stack down) pour que `pytest -q`
+#     # ne tente rien. La CI/ton shell peuvent définir E2E_STACK_UP=1.
+#     os.environ.setdefault("E2E_STACK_UP", os.getenv("E2E_STACK_UP", "0"))

@@ -4,21 +4,30 @@ from __future__ import annotations
 Monitoring HTTP.
 """
 from app.workers.celery_app import celery
-from app.application.services.http_monitor_service import check_http_targets
+from app.application.services.http_monitor_service import (
+    check_http_targets,
+    check_one_target,
+)
 
 # Task périodique (déjà en place chez toi)
 @celery.task(name="tasks.http")
 def http_checks() -> int:
     return check_http_targets()
 
-# ✅ Task optionnelle pour une seule cible (utile pour debug/manuel)
-try:
-    from app.application.services.http_monitor_service import check_one_target
-except Exception:
-    check_one_target = None  # si la fonction n'existe pas encore
 
 @celery.task(name="tasks.http_one")
 def http_check_one(target_id: str) -> dict:
-    if check_one_target is None:
-        return {"checked": False, "reason": "not_implemented"}
+    """
+    Task debug/manuel : check d'une seule cible HTTP.
+    Retourne toujours un dict "stable" (pas d'exception silencieuse).
+    """
+    if not target_id:
+        return {"checked": False, "reason": "missing_target_id"}
+
+    # Normalisation early : évite de faire planter la task sur un id invalide
+    try:
+        uuid.UUID(str(target_id))
+    except Exception:
+        return {"checked": False, "reason": "bad_id"}
+
     return check_one_target(target_id)

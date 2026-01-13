@@ -1,0 +1,45 @@
+# =============================================================================
+# Stage 1: Builder
+# =============================================================================
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# =============================================================================
+# Stage 2: Runtime
+# =============================================================================
+FROM python:3.11-slim
+
+WORKDIR /app/webapp
+
+# Installation curl pour healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Utilisateur non-root
+RUN useradd -m -u 1000 webapp && \
+    chown -R webapp:webapp /app
+
+# Copie des dépendances
+COPY --from=builder --chown=webapp:webapp /root/.local /home/webapp/.local
+ENV PATH=/home/webapp/.local/bin:$PATH
+
+# Copie du code
+COPY --chown=webapp:webapp . .
+
+USER webapp
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:3000/_health || exit 1
+
+# Démarrage uvicorn
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000"]
