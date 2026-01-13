@@ -14,6 +14,8 @@ from fastapi import APIRouter, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from app.main import VERSION_CACHE_BUST
+
 router = APIRouter(tags=["web"])
 
 # ---------------------------------------------------------------------
@@ -22,7 +24,7 @@ router = APIRouter(tags=["web"])
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 # Cache-busting simple utilisé par ton fragment _head.html
-templates.env.globals["version_cache_bust"] = "dev"
+templates.env.globals["version_cache_bust"] = VERSION_CACHE_BUST
 
 # ---------------------------------------------------------------------
 # URL interne du backend API (réseau Docker).
@@ -62,7 +64,7 @@ async def login_submit(
                 {
                     "request": request,
                     "error": "API indisponible, réessayez.",
-                    "version_cache_bust": "dev",
+                    "version_cache_bust": VERSION_CACHE_BUST,
                 },
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
@@ -74,7 +76,7 @@ async def login_submit(
             {
                 "request": request,
                 "error": "Identifiants invalides.",
-                "version_cache_bust": "dev",
+                "version_cache_bust": VERSION_CACHE_BUST,
             },
             status_code=status.HTTP_401_UNAUTHORIZED,
         )

@@ -134,9 +134,23 @@ function applyThresholdToCardUI(card, th) {
 /* ----------------------------
    Autosave (alerting / pause) - P2/P6
 -----------------------------*/
+/* ----------------------------
+   Autosave (alerting / pause / threshold) - P2/P6
+   
+   Gère la sauvegarde automatique des formulaires de métriques :
+   - alerting : toggle activation des alertes
+   - pause : toggle pause de la métrique
+   - threshold : création/modification de seuils avec transformation JSON
+   
+   Flow :
+   1. Validation du formulaire et contexte
+   2. Transformation du payload selon l'endpoint
+   3. Envoi fetch avec gestion des erreurs
+   4. Mise à jour de l'UI en cas de succès
+-----------------------------*/
 function autoSave(form) {
   // ------------------------------------------------------------
-  // Guards + contexte
+  // 1. Guards + contexte
   // ------------------------------------------------------------
   const card = form?.closest?.(".metric-card, .service-card");
   if (!card) {
@@ -145,49 +159,34 @@ function autoSave(form) {
   }
 
   const endpoint = String(form.dataset.endpoint || "").toLowerCase();
-
-  // Patch "thresholdExists" : ton template met data-threshold-exists (kebab-case),
-  // mais ton JS lit form.dataset.thresholdExists (camelCase) -> undefined.
-  // Donc on mappe la valeur au bon endroit.
-  if (endpoint === "threshold") {
-    // Construire un body JSON propre
-    const body = {};
-    
-    // Mapper les champs form vers API schema
-    if (formData.has("comparison")) {
-      body.comparison = formData.get("comparison");
-    }
-    if (formData.has("severity")) {
-      body.severity = formData.get("severity");
-    }
-    
-    // ✅ MAPPING VALUE SELON TYPE
-    if (formData.has("value_num")) {
-      const val = formData.get("value_num");
-      body.threshold = parseFloat(val.replace(",", ".")); // ← alias accepté
-    } else if (formData.has("value_bool")) {
-      body.value_bool = formData.get("value_bool") === "1";
-    } else if (formData.has("value_str")) {
-      body.value_str = formData.get("value_str");
-    }
-    
-    fetchOpts.headers["Content-Type"] = "application/json";
-    fetchOpts.body = JSON.stringify(body);
-  } else {
-    // alerting/pause : garder URLSearchParams
-    fetchOpts.body = formData;
-  }
-
+  
+  // ✅ Déclarer formData ICI, AVANT toute utilisation
   const formData = new FormData(form);
 
   // ------------------------------------------------------------
-  // NO_DATA => état unknown
+  // 2. Patch "thresholdExists" pour endpoint threshold
+  // Le template HTML utilise data-threshold-exists (kebab-case)
+  // mais JS lit form.dataset.thresholdExists (camelCase)
+  // On synchronise les deux
   // ------------------------------------------------------------
-  if (isNoDataCard(card)) applyUnknownState(card, true);
-  else applyUnknownState(card, false);
+  if (endpoint === "threshold") {
+    const fromAttr = form.getAttribute("data-threshold-exists");
+    if (fromAttr != null && form.dataset.thresholdExists == null) {
+      form.dataset.thresholdExists = String(fromAttr);
+    }
+  }
 
   // ------------------------------------------------------------
-  // Flags + inactive
+  // 3. NO_DATA => état unknown (pas de critical/normal)
+  // ------------------------------------------------------------
+  if (isNoDataCard(card)) {
+    applyUnknownState(card, true);
+  } else {
+    applyUnknownState(card, false);
+  }
+
+  // ------------------------------------------------------------
+  // 4. Calcul des flags (alertEnabled, paused, isInactive)
   // ------------------------------------------------------------
   const flags = computeCardFlags(card, form, formData);
   const isInactive = !!flags.isInactive;
@@ -195,7 +194,8 @@ function autoSave(form) {
   card.classList.toggle("inactive", isInactive);
 
   // ------------------------------------------------------------
-  // Enable/disable fields (alerting uniquement)
+  // 5. Enable/disable fields (alerting uniquement)
+  // Quand alerting est OFF, on désactive les champs de seuil
   // ------------------------------------------------------------
   if (endpoint === "alerting") {
     const alertEnabled = !!flags.alertEnabled;
@@ -210,7 +210,7 @@ function autoSave(form) {
   }
 
   // ------------------------------------------------------------
-  // UX "Définir" / validation seuil (threshold)
+  // 6. Validation seuil (threshold uniquement)
   // - Pas d'autosave si aucun seuil n'existe (sauf forceSave)
   // - Refuse valeurs invalides
   // ------------------------------------------------------------
@@ -219,6 +219,7 @@ function autoSave(form) {
       updateThresholdUI(form);
     } catch (_) {}
 
+    // Validation : refuse valeurs vides ou invalides
     if (typeof validateThresholdForm === "function" && !validateThresholdForm(form)) {
       return Promise.resolve(null);
     }
@@ -226,20 +227,20 @@ function autoSave(form) {
     const exists = (form.dataset.thresholdExists || "0") === "1";
     const forceSave = (form.dataset.forceSave || "0") === "1";
 
-    // Aucun seuil + pas forcé => on ne fait rien
+    // Aucun seuil existant + pas forcé => on ne fait rien (pas de création auto)
     if (!exists && !forceSave) {
       return Promise.resolve(null);
     }
 
-    // Si forcé, on consomme le flag ici (évite double-save)
+    // Si forcé (bouton "Définir"), on consomme le flag ici (évite double-save)
     if (forceSave) {
       form.dataset.forceSave = "0";
     }
   }
 
   // ------------------------------------------------------------
-  // Recompute critical
-  // - Ne pas recalculer quand on clique juste le toggle alerting
+  // 7. Recompute critical state (si nécessaire)
+  // Ne pas recalculer quand on clique juste le toggle alerting/pause
   // ------------------------------------------------------------
   const trigger = document.activeElement;
   const isAlertToggle = endpoint === "alerting" && trigger?.name === "alert_enabled";
@@ -258,7 +259,7 @@ function autoSave(form) {
   }
 
   // ------------------------------------------------------------
-  // Animation 💾 (uniquement si on va envoyer)
+  // 8. Animation 💾 (indicateur global de sauvegarde)
   // ------------------------------------------------------------
   const globalIndicator = document.getElementById("global-saving-indicator");
   if (globalIndicator) {
@@ -267,9 +268,10 @@ function autoSave(form) {
   }
 
   // ------------------------------------------------------------
-  // Body robuste selon endpoint
-  // - alerting/pause => urlencoded (évite multipart boundary cassée)
-  // - threshold => FormData
+  // 9. Construction du body selon l'endpoint
+  // - alerting/pause => URLSearchParams (urlencoded)
+  // - threshold => JSON avec mapping des champs
+  // - autres => FormData classique
   // ------------------------------------------------------------
   const fetchOpts = {
     method: "POST",
@@ -280,35 +282,68 @@ function autoSave(form) {
   };
 
   if (endpoint === "alerting") {
+    // Toggle alerting : envoie alert_enabled=0 ou 1
     const cb = form.querySelector('input[name="alert_enabled"]');
     const enabled = !!cb?.checked;
 
     const params = new URLSearchParams();
-    params.set("alert_enabled", enabled ? "1" : "0"); // toujours présent
+    params.set("alert_enabled", enabled ? "1" : "0");
 
     fetchOpts.headers["Content-Type"] = "application/x-www-form-urlencoded;charset=UTF-8";
     fetchOpts.body = params.toString();
+    
   } else if (endpoint === "pause") {
+    // Toggle pause : envoie paused=0 ou 1
     const cb = form.querySelector('input[name="paused"]');
     const paused = !!cb?.checked;
 
     const params = new URLSearchParams();
-    params.set("paused", paused ? "1" : "0"); // toujours présent
+    params.set("paused", paused ? "1" : "0");
 
     fetchOpts.headers["Content-Type"] = "application/x-www-form-urlencoded;charset=UTF-8";
     fetchOpts.body = params.toString();
+    
+  } else if (endpoint === "threshold") {
+    // ✅ THRESHOLD : Construire un body JSON avec mapping correct
+    // L'API attend "threshold" (alias de value_num) ou value_bool/value_str
+    const body = {};
+    
+    // Mapper comparison et severity
+    if (formData.has("comparison")) {
+      body.comparison = formData.get("comparison");
+    }
+    if (formData.has("severity")) {
+      body.severity = formData.get("severity");
+    }
+    
+    // Mapper la valeur selon le type de métrique
+    if (formData.has("value_num")) {
+      // Numérique : mapper vers "threshold" (alias accepté par l'API)
+      const val = formData.get("value_num");
+      body.threshold = parseFloat(val.replace(",", "."));
+    } else if (formData.has("value_bool")) {
+      // Booléen : envoyer value_bool directement
+      body.value_bool = formData.get("value_bool") === "1";
+    } else if (formData.has("value_str")) {
+      // String : envoyer value_str directement
+      body.value_str = formData.get("value_str");
+    }
+    
+    fetchOpts.headers["Content-Type"] = "application/json";
+    fetchOpts.body = JSON.stringify(body);
+    
   } else {
-    // threshold (et autres) -> FormData classique
+    // Autres endpoints : FormData classique (multipart)
     fetchOpts.body = formData;
-    // ⚠️ NE PAS fixer Content-Type ici
+    // ⚠️ NE PAS fixer Content-Type pour FormData (boundary auto)
   }
 
   // ------------------------------------------------------------
-  // Fetch + réponses
+  // 10. Fetch + gestion des réponses
   // ------------------------------------------------------------
   return fetch(form.action, fetchOpts)
     .then(async (response) => {
-      // Auth guard webapp: non authentifié => 303 Location: /login
+      // Auth guard webapp : redirection si non authentifié
       if (response.status === 303) {
         window.location.href = response.headers.get("location") || "/login";
         return response;
@@ -318,6 +353,7 @@ function autoSave(form) {
         return response;
       }
 
+      // Tentative de parsing JSON de la réponse
       let payload = null;
       try {
         payload = await response.json();
@@ -325,33 +361,38 @@ function autoSave(form) {
         payload = null;
       }
 
+      // Erreur HTTP (4xx, 5xx)
       if (!response.ok) {
         console.error("❌ Erreur lors de la sauvegarde :", response.status, payload || response.statusText);
         return response;
       }
 
-      // threshold: succès => UI + autosave activé + suppression bouton Définir
+      // ------------------------------------------------------------
+      // 11. Succès threshold : mise à jour UI
+      // ------------------------------------------------------------
       if (endpoint === "threshold" && payload && payload.success) {
         const th = payload.threshold || null;
 
-        // UI dataset + search (et autres)
+        // Mettre à jour les datasets de la card (pour debug/filtres)
         applyThresholdToCardUI(card, th);
 
-        // ✅ Après succès : le seuil existe maintenant → autosave autorisé ensuite
+        // ✅ Le seuil existe maintenant → autosave autorisé pour les prochaines modifs
         form.dataset.thresholdExists = "1";
 
-        // ✅ Cacher le bouton Définir si présent
+        // ✅ Supprimer le bouton "Définir" (désormais inutile)
         const btn = form.querySelector(".define-btn");
         if (btn) btn.remove();
 
+        // Mettre à jour le badge de seuil (retire "À définir")
         updateThresholdBadge(card);
 
-        // Optionnel: remettre à jour l'UI (bordure/valid)
+        // Optionnel : remettre à jour l'UI (bordure/validation)
         try {
           updateThresholdUI(form);
         } catch (_) {}
       }
 
+      // Refresh du filtrage (si les flags inactive/active ont changé)
       try {
         filterMetrics();
       } catch (_) {}

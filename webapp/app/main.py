@@ -31,6 +31,19 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def get_version_cache_bust():
+    """Récupère le hash court du dernier commit Git ou fallback sur env/dev"""
+    try:
+        git_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], 
+                                          stderr=subprocess.DEVNULL).decode('utf-8').strip()
+        return git_hash
+    except:
+        return os.getenv("VERSION_CACHE_BUST", "dev")
+
+
+VERSION_CACHE_BUST = get_version_cache_bust()
+
+
 def _parse_iso(ts: str | None) -> datetime | None:
     """
     Parse ISO8601 "backend-like" (avec ou sans Z).
@@ -124,7 +137,7 @@ def login_page(request: Request, error: str | None = None):
         {
             "request": request,
             "title": "Connexion",
-            "version_cache_bust": "dev",  # utilisé dans _head.html pour bust de cache CSS
+            "version_cache_bust": VERSION_CACHE_BUST,
             "error": error,
         },
     )
@@ -145,7 +158,7 @@ async def login_submit(
             # API down / réseau KO → 503 côté webapp
             return templates.TemplateResponse(
                 "login.html",
-                {"request": request, "error": "API indisponible, réessayez.", "version_cache_bust": "dev"},
+                {"request": request, "error": "API indisponible, réessayez.", "version_cache_bust": VERSION_CACHE_BUST},
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
@@ -153,7 +166,7 @@ async def login_submit(
         # 401 attendu si mauvais identifiants
         return templates.TemplateResponse(
             "login.html",
-            {"request": request, "error": "Identifiants invalides.", "version_cache_bust": "dev"},
+            {"request": request, "error": "Identifiants invalides.", "version_cache_bust": VERSION_CACHE_BUST},
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
@@ -203,7 +216,7 @@ async def home(request: Request):
             "user": user,
             "first_machine_id": first_machine_id,
             "title": "NeonMonitor",
-            "version_cache_bust": "dev",
+            "version_cache_bust": VERSION_CACHE_BUST,
         },
     )
 
@@ -241,7 +254,7 @@ async def fragment_sites(request: Request):
     Liste les sites monitorés.
     Appelle l’API backend : GET /api/v1/http-targets
     """
-    ctx = {"request": request, "version_cache_bust": "dev", "sites": []}
+    ctx = {"request": request, "version_cache_bust": VERSION_CACHE_BUST, "sites": []}
 
     try:
         async with httpx.AsyncClient(base_url=API_BASE, timeout=10.0) as client:
@@ -262,7 +275,7 @@ async def fragment_sites(request: Request):
 @app.get("/fragment/machines", response_class=HTMLResponse)
 @login_required
 async def fragment_machines(request: Request):
-    ctx = {"request": request, "version_cache_bust": "dev"}
+    ctx = {"request": request, "version_cache_bust": VERSION_CACHE_BUST}
 
     # 1) Charger la liste
     try:
@@ -308,7 +321,7 @@ async def fragment_machine_detail(request: Request, machine_id: str):
     Détails machine (host + métriques).
     Consomme /api/v1/machines/{id}/detail (protégé X-API-Key).
     """
-    ctx = {"request": request, "version_cache_bust": "dev"}
+    ctx = {"request": request, "version_cache_bust": VERSION_CACHE_BUST}
 
     try:
         async with httpx.AsyncClient(base_url=API_BASE, timeout=10.0) as client:
@@ -389,7 +402,7 @@ async def fragment_settings(request: Request):
         {
             "request": request,
             "alert_config": cfg,
-            "version_cache_bust": "dev",
+            "version_cache_bust": VERSION_CACHE_BUST
         },
     )
 
@@ -406,7 +419,7 @@ async def fragment_events(request: Request):
     """
     ctx = {
         "request": request,
-        "version_cache_bust": "dev",
+        "version_cache_bust": VERSION_CACHE_BUST
         "events": [],
     }
 
