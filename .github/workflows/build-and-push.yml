@@ -5,25 +5,37 @@ on:
     branches: [main, production]
     tags: ['v*']
 
+# Variables globales (non sensibles)
 env:
-  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
   REGISTRY: docker.io
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
 
+# Nécessaire pour uploader un SARIF (Trivy) dans l'onglet Security
 permissions:
   contents: read
   security-events: write
 
 jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # 1) BUILD & PUSH
+  #   - build + push 2 images (API + WEB)
+  #   - tags générés par metadata-action
+  #   - ajoute aussi ":latest" uniquement sur main/production
+  # ────────────────────────────────────────────────────────────────────────────
   build-and-push:
+    name: Build & Push (${{ matrix.image }})
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
 
     strategy:
+      fail-fast: false
       matrix:
         include:
+          # API: build depuis la racine car le Dockerfile référence des fichiers "server/..."
           - image: monitoring-api
             context: .
             dockerfile: ./server/Dockerfile.prod
+
+          # WEB: build depuis webapp (Dockerfile et requirements dans webapp/)
           - image: monitoring-web
             context: ./webapp
             dockerfile: ./webapp/Dockerfile.prod
@@ -41,6 +53,9 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      # Génère des tags "propres" :
+      # - sur branches : main, production → tag "main" ou "production"
+      # - sur tag git vX.Y.Z → tags "X.Y.Z" et "X.Y"
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
@@ -50,9 +65,10 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/production' }}
 
-      - name: Build and push
+      # On ajoute ":latest" explicitement seulement si on push sur main ou production.
+      # (On évite les "enable=${{ }}" dans metadata-action qui peut être fragile.)
+      - name: Build and push (branches + tags)
         id: build
         uses: docker/build-push-action@v5
         with:
@@ -65,16 +81,38 @@ jobs:
           cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache
           cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache,mode=max
 
+      # Push du tag "latest" uniquement pour main/prod
+      - name: Also tag & push :latest (main/production only)
+        if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/production')
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          platforms: linux/amd64
+          tags: ${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache,mode=max
+
       - name: Image digest
         run: echo "${{ steps.build.outputs.digest }}"
 
+  # ────────────────────────────────────────────────────────────────────────────
+  # 2) SECURITY SCAN (Trivy)
+  #   - seulement sur main
+  #   - scanne :latest (donc il faut que latest soit bien poussé sur main)
+  # ────────────────────────────────────────────────────────────────────────────
   security-scan:
+    name: Trivy scan (${{ matrix.image }})
     needs: build-and-push
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
+
     strategy:
+      fail-fast: false
       matrix:
         image: [monitoring-api, monitoring-web]
+
     steps:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
@@ -84,18 +122,26 @@ jobs:
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
 
+      # v4 recommandé (v3 déprécié fin 2026)
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
 
+  # ────────────────────────────────────────────────────────────────────────────
+  # 3) NOTIFY (placeholder)
+  #   - simple sortie console
+  #   - seulement sur main
+  # ────────────────────────────────────────────────────────────────────────────
   notify:
+    name: Notify
     needs: [build-and-push, security-scan]
     runs-on: ubuntu-latest
     if: always() && github.ref == 'refs/heads/main'
+
     steps:
-      - name: Send notification
+      - name: Send notification (placeholder)
         run: |
           echo "build-and-push: ${{ needs.build-and-push.result }}"
           echo "security-scan: ${{ needs.security-scan.result }}"
