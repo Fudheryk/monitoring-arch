@@ -150,10 +150,32 @@ function autoSave(form) {
   // mais ton JS lit form.dataset.thresholdExists (camelCase) -> undefined.
   // Donc on mappe la valeur au bon endroit.
   if (endpoint === "threshold") {
-    const fromAttr = form.getAttribute("data-threshold-exists"); // "0"/"1" ou null
-    if (fromAttr != null && form.dataset.thresholdExists == null) {
-      form.dataset.thresholdExists = String(fromAttr);
+    // Construire un body JSON propre
+    const body = {};
+    
+    // Mapper les champs form vers API schema
+    if (formData.has("comparison")) {
+      body.comparison = formData.get("comparison");
     }
+    if (formData.has("severity")) {
+      body.severity = formData.get("severity");
+    }
+    
+    // ✅ MAPPING VALUE SELON TYPE
+    if (formData.has("value_num")) {
+      const val = formData.get("value_num");
+      body.threshold = parseFloat(val.replace(",", ".")); // ← alias accepté
+    } else if (formData.has("value_bool")) {
+      body.value_bool = formData.get("value_bool") === "1";
+    } else if (formData.has("value_str")) {
+      body.value_str = formData.get("value_str");
+    }
+    
+    fetchOpts.headers["Content-Type"] = "application/json";
+    fetchOpts.body = JSON.stringify(body);
+  } else {
+    // alerting/pause : garder URLSearchParams
+    fetchOpts.body = formData;
   }
 
   const formData = new FormData(form);

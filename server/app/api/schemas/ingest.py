@@ -258,4 +258,4 @@ class IngestRequest(BaseModel):
     class Config:
         extra = "ignore"
         # On autorise les alias pour laisser Pydantic parser proprement les datetime, etc.
-        allow_population_by_field_name = True
+        validate_by_name = True

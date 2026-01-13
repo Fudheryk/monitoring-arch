@@ -274,8 +274,12 @@ docker system df
 # Nettoyer les images inutilisées
 docker image prune -a -f
 
-# Nettoyer tout (ATTENTION : supprime volumes non utilisés)
-# docker system prune -a --volumes
+```
+
+⚠️ Attention ! - ne jamais faire cela en *PRODUCTION* :
+
+```bash
+docker system prune -a --volumes
 ```
 
 ### Ressources en Temps Réel
@@ -284,9 +288,28 @@ docker image prune -a -f
 # CPU/RAM par conteneur
 docker stats
 
+# Suivre l'évolution
+watch -n 30 'docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"'
+
 # Ou avec htop
 htop
 ```
+
+### Rotation des Logs
+Les logs sont automatiquement limités :
+- **Max size** : 10 MB par fichier
+- **Max files** : 3 fichiers conservés
+- **Format** : JSON pour parsing facile
+
+### Nettoyage Automatique
+Pour éviter l'accumulation d'images Docker inutilisées :
+
+```bash
+# Éditer le crontab
+crontab -e
+
+# Nettoyage sécurisé (gardez les volumes !)
+0 3 * * 0 docker system prune -f  # SANS --volumes !
 
 ---
 

@@ -85,12 +85,18 @@ services:
       migrate:
         condition: service_completed_successfully
     stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery inspect ping --timeout=5 || exit 1"]
+      interval: 30s      # ← AJOUTER
+      timeout: 10s       # ← AJOUTER (plus long pour celery ping)
+      retries: 3         # ← AJOUTER
+      start_period: 60s  # ← AJOUTER (Celery démarre lentement)
     deploy:
       resources:
         limits:
-          memory: 300M
+          memory: 350M
         reservations:
-          memory: 150M
+          memory: 180M
 
   # ---------------------------------------------------------------------------
   # Celery Beat Scheduler
@@ -107,6 +113,12 @@ services:
       migrate:
         condition: service_completed_successfully
     stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'celery beat' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -168,7 +180,7 @@ services:
       --appendonly yes
       --appendfsync everysec
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli --pass ${REDIS_PASSWORD} ping | grep PONG"]
+      test: ["CMD", "redis-cli", "--pass", "${REDIS_PASSWORD}", "ping"]  # ← Simplifier
       interval: 10s
       timeout: 5s
       retries: 5
@@ -273,6 +285,12 @@ services:
       options:
         max-size: "2m"
         max-file: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /etc/letsencrypt/live/neonmonitor.dockl.com/fullchain.pem || exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
 
 # =============================================================================
 # Volumes
