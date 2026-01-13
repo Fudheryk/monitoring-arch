@@ -1,0 +1,1185 @@
+﻿2026-01-13T06:17:46.3898547Z Current runner version: '2.330.0'
+2026-01-13T06:17:46.3921895Z ##[group]Runner Image Provisioner
+2026-01-13T06:17:46.3922908Z Hosted Compute Agent
+2026-01-13T06:17:46.3923623Z Version: 20251211.462
+2026-01-13T06:17:46.3924200Z Commit: 6cbad8c2bb55d58165063d031ccabf57e2d2db61
+2026-01-13T06:17:46.3924917Z Build Date: 2025-12-11T16:28:49Z
+2026-01-13T06:17:46.3925622Z Worker ID: {e04d74dc-0b0a-4e88-be8a-10c6ac8cd965}
+2026-01-13T06:17:46.3926335Z ##[endgroup]
+2026-01-13T06:17:46.3926807Z ##[group]Operating System
+2026-01-13T06:17:46.3927429Z Ubuntu
+2026-01-13T06:17:46.3927899Z 24.04.3
+2026-01-13T06:17:46.3928306Z LTS
+2026-01-13T06:17:46.3928820Z ##[endgroup]
+2026-01-13T06:17:46.3929302Z ##[group]Runner Image
+2026-01-13T06:17:46.3929831Z Image: ubuntu-24.04
+2026-01-13T06:17:46.3930334Z Version: 20260105.202.1
+2026-01-13T06:17:46.3931376Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260105.202/images/ubuntu/Ubuntu2404-Readme.md
+2026-01-13T06:17:46.3933133Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260105.202
+2026-01-13T06:17:46.3934144Z ##[endgroup]
+2026-01-13T06:17:46.3935159Z ##[group]GITHUB_TOKEN Permissions
+2026-01-13T06:17:46.3937035Z Contents: read
+2026-01-13T06:17:46.3937579Z Metadata: read
+2026-01-13T06:17:46.3938172Z ##[endgroup]
+2026-01-13T06:17:46.3940133Z Secret source: Actions
+2026-01-13T06:17:46.3940810Z Prepare workflow directory
+2026-01-13T06:17:46.4362837Z Prepare all required actions
+2026-01-13T06:17:46.4399847Z Getting action download info
+2026-01-13T06:17:46.7749192Z Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)
+2026-01-13T06:17:46.8767887Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-01-13T06:17:46.9588394Z Download action repository 'actions/cache@v4' (SHA:0057852bfaa89a56745cba8c7296529d2fc39830)
+2026-01-13T06:17:47.0616047Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+2026-01-13T06:17:47.2950451Z Complete job name: unit (4)
+2026-01-13T06:17:47.3392409Z ##[group]Checking docker version
+2026-01-13T06:17:47.3405740Z ##[command]/usr/bin/docker version --format '{{.Server.APIVersion}}'
+2026-01-13T06:17:47.4271511Z '1.48'
+2026-01-13T06:17:47.4289316Z Docker daemon API version: '1.48'
+2026-01-13T06:17:47.4290183Z ##[command]/usr/bin/docker version --format '{{.Client.APIVersion}}'
+2026-01-13T06:17:47.4478746Z '1.48'
+2026-01-13T06:17:47.4491978Z Docker client API version: '1.48'
+2026-01-13T06:17:47.4496761Z ##[endgroup]
+2026-01-13T06:17:47.4499605Z ##[group]Clean up resources from previous jobs
+2026-01-13T06:17:47.4505152Z ##[command]/usr/bin/docker ps --all --quiet --no-trunc --filter "label=66fcc6"
+2026-01-13T06:17:47.4641861Z ##[command]/usr/bin/docker network prune --force --filter "label=66fcc6"
+2026-01-13T06:17:47.4767969Z ##[endgroup]
+2026-01-13T06:17:47.4768510Z ##[group]Create local container network
+2026-01-13T06:17:47.4779042Z ##[command]/usr/bin/docker network create --label 66fcc6 github_network_21873fc24a89462083192ada0c3e8ee1
+2026-01-13T06:17:47.5271684Z 4350396ef19b3d4c7f991589c16d6fb54bf7ac4acd8b715e066252f8cb4a3c9c
+2026-01-13T06:17:47.5297357Z ##[endgroup]
+2026-01-13T06:17:47.5323495Z ##[group]Starting redis service container
+2026-01-13T06:17:47.5350588Z ##[command]/usr/bin/docker pull redis:7-alpine
+2026-01-13T06:17:47.7658812Z 7-alpine: Pulling from library/redis
+2026-01-13T06:17:47.8356914Z f637881d1138: Pulling fs layer
+2026-01-13T06:17:47.8358317Z 60c57c0072ef: Pulling fs layer
+2026-01-13T06:17:47.8359529Z fc4343b4accd: Pulling fs layer
+2026-01-13T06:17:47.8360458Z 380e8aa8b1fd: Pulling fs layer
+2026-01-13T06:17:47.8361298Z c70aae7b5e0d: Pulling fs layer
+2026-01-13T06:17:47.8362112Z 232f7549c9b0: Pulling fs layer
+2026-01-13T06:17:47.8363157Z 4f4fb700ef54: Pulling fs layer
+2026-01-13T06:17:47.8363920Z d75b3becd998: Pulling fs layer
+2026-01-13T06:17:47.8364653Z 380e8aa8b1fd: Waiting
+2026-01-13T06:17:47.8365259Z c70aae7b5e0d: Waiting
+2026-01-13T06:17:47.8366207Z 232f7549c9b0: Waiting
+2026-01-13T06:17:47.8366847Z 4f4fb700ef54: Waiting
+2026-01-13T06:17:47.8881781Z fc4343b4accd: Verifying Checksum
+2026-01-13T06:17:47.8883513Z fc4343b4accd: Download complete
+2026-01-13T06:17:47.8982389Z 60c57c0072ef: Verifying Checksum
+2026-01-13T06:17:47.8985799Z 60c57c0072ef: Download complete
+2026-01-13T06:17:47.9132299Z f637881d1138: Verifying Checksum
+2026-01-13T06:17:47.9133857Z f637881d1138: Download complete
+2026-01-13T06:17:47.9542193Z 380e8aa8b1fd: Verifying Checksum
+2026-01-13T06:17:47.9544153Z 380e8aa8b1fd: Download complete
+2026-01-13T06:17:47.9579188Z 232f7549c9b0: Verifying Checksum
+2026-01-13T06:17:47.9580761Z 232f7549c9b0: Download complete
+2026-01-13T06:17:47.9981563Z 4f4fb700ef54: Verifying Checksum
+2026-01-13T06:17:47.9984164Z 4f4fb700ef54: Download complete
+2026-01-13T06:17:48.0045397Z d75b3becd998: Verifying Checksum
+2026-01-13T06:17:48.0051542Z d75b3becd998: Download complete
+2026-01-13T06:17:48.0263735Z f637881d1138: Pull complete
+2026-01-13T06:17:48.0564127Z 60c57c0072ef: Pull complete
+2026-01-13T06:17:48.0628925Z c70aae7b5e0d: Verifying Checksum
+2026-01-13T06:17:48.0630793Z c70aae7b5e0d: Download complete
+2026-01-13T06:17:48.2129523Z fc4343b4accd: Pull complete
+2026-01-13T06:17:48.2411698Z 380e8aa8b1fd: Pull complete
+2026-01-13T06:17:48.4272811Z c70aae7b5e0d: Pull complete
+2026-01-13T06:17:48.4445889Z 232f7549c9b0: Pull complete
+2026-01-13T06:17:48.4531765Z 4f4fb700ef54: Pull complete
+2026-01-13T06:17:48.4647233Z d75b3becd998: Pull complete
+2026-01-13T06:17:48.4701426Z Digest: sha256:ee64a64eaab618d88051c3ade8f6352d11531fcf79d9a4818b9b183d8c1d18ba
+2026-01-13T06:17:48.4716546Z Status: Downloaded newer image for redis:7-alpine
+2026-01-13T06:17:48.4727481Z docker.io/library/redis:7-alpine
+2026-01-13T06:17:48.4768671Z ##[command]/usr/bin/docker create --name 0c982154601a445fbfceaca0e4e9c410_redis7alpine_b53fe7 --label 66fcc6 --network github_network_21873fc24a89462083192ada0c3e8ee1 --network-alias redis -p 6379:6379 --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5 -e GITHUB_ACTIONS=true -e CI=true redis:7-alpine
+2026-01-13T06:17:48.5027786Z 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:17:48.5053069Z ##[command]/usr/bin/docker start 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:17:48.6995276Z 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:17:48.7017404Z ##[command]/usr/bin/docker ps --all --filter id=463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487 --filter status=running --no-trunc --format "{{.ID}} {{.Status}}"
+2026-01-13T06:17:48.7147987Z 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487 Up Less than a second (health: starting)
+2026-01-13T06:17:48.7167972Z ##[command]/usr/bin/docker port 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:17:48.7285621Z 6379/tcp -> 0.0.0.0:6379
+2026-01-13T06:17:48.7286681Z 6379/tcp -> [::]:6379
+2026-01-13T06:17:48.7330487Z ##[endgroup]
+2026-01-13T06:17:48.7340020Z ##[group]Waiting for all services to be ready
+2026-01-13T06:17:48.7355828Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:17:48.7470494Z starting
+2026-01-13T06:17:48.7491326Z redis service is starting, waiting 2 seconds before checking again.
+2026-01-13T06:17:50.7500893Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:17:50.7628260Z starting
+2026-01-13T06:17:50.7641913Z redis service is starting, waiting 3 seconds before checking again.
+2026-01-13T06:17:54.3842913Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:17:54.3964948Z starting
+2026-01-13T06:17:54.3979513Z redis service is starting, waiting 8 seconds before checking again.
+2026-01-13T06:18:03.3272243Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:18:03.3388328Z healthy
+2026-01-13T06:18:03.3404908Z redis service is healthy.
+2026-01-13T06:18:03.3405343Z ##[endgroup]
+2026-01-13T06:18:03.3728628Z ##[group]Run actions/checkout@v4
+2026-01-13T06:18:03.3729195Z with:
+2026-01-13T06:18:03.3729410Z   repository: Fudheryk/monitoring-arch
+2026-01-13T06:18:03.3729866Z   token: ***
+2026-01-13T06:18:03.3730058Z   ssh-strict: true
+2026-01-13T06:18:03.3730281Z   ssh-user: git
+2026-01-13T06:18:03.3730465Z   persist-credentials: true
+2026-01-13T06:18:03.3730689Z   clean: true
+2026-01-13T06:18:03.3730878Z   sparse-checkout-cone-mode: true
+2026-01-13T06:18:03.3731123Z   fetch-depth: 1
+2026-01-13T06:18:03.3731295Z   fetch-tags: false
+2026-01-13T06:18:03.3731481Z   show-progress: true
+2026-01-13T06:18:03.3731683Z   lfs: false
+2026-01-13T06:18:03.3731848Z   submodules: false
+2026-01-13T06:18:03.3732029Z   set-safe-directory: true
+2026-01-13T06:18:03.3732438Z env:
+2026-01-13T06:18:03.3732878Z   MIN_COVERAGE: 70
+2026-01-13T06:18:03.3733072Z   PYTHONPATH: server
+2026-01-13T06:18:03.3733267Z   ENV_FILE: /dev/null
+2026-01-13T06:18:03.3733500Z   DATABASE_URL: sqlite+pysqlite:///:memory:
+2026-01-13T06:18:03.3733900Z   REDIS_URL: redis://localhost:6379/0
+2026-01-13T06:18:03.3734159Z   STUB_SLACK: 1
+2026-01-13T06:18:03.3734348Z   ALERT_REMINDER_MINUTES: 1
+2026-01-13T06:18:03.3734554Z   KEY: dev-apikey-123
+2026-01-13T06:18:03.3734760Z   API: http://localhost:8000
+2026-01-13T06:18:03.3734980Z ##[endgroup]
+2026-01-13T06:18:03.4831341Z Syncing repository: Fudheryk/monitoring-arch
+2026-01-13T06:18:03.4833486Z ##[group]Getting Git version info
+2026-01-13T06:18:03.4834253Z Working directory is '/home/runner/work/monitoring-arch/monitoring-arch'
+2026-01-13T06:18:03.4835319Z [command]/usr/bin/git version
+2026-01-13T06:18:03.4906259Z git version 2.52.0
+2026-01-13T06:18:03.4932058Z ##[endgroup]
+2026-01-13T06:18:03.4945256Z Temporarily overriding HOME='/home/runner/work/_temp/ef0e3974-7f82-4c9e-9cbf-84ac5bd31c5c' before making global git config changes
+2026-01-13T06:18:03.4946085Z Adding repository directory to the temporary git global config as a safe directory
+2026-01-13T06:18:03.4950347Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/monitoring-arch/monitoring-arch
+2026-01-13T06:18:03.4990911Z Deleting the contents of '/home/runner/work/monitoring-arch/monitoring-arch'
+2026-01-13T06:18:03.4994517Z ##[group]Initializing the repository
+2026-01-13T06:18:03.4998492Z [command]/usr/bin/git init /home/runner/work/monitoring-arch/monitoring-arch
+2026-01-13T06:18:03.5126437Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-01-13T06:18:03.5127399Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-01-13T06:18:03.5128092Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-01-13T06:18:03.5128890Z hint: call:
+2026-01-13T06:18:03.5129164Z hint:
+2026-01-13T06:18:03.5129586Z hint: 	git config --global init.defaultBranch <name>
+2026-01-13T06:18:03.5130112Z hint:
+2026-01-13T06:18:03.5130614Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-01-13T06:18:03.5131462Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-01-13T06:18:03.5132128Z hint:
+2026-01-13T06:18:03.5132472Z hint: 	git branch -m <name>
+2026-01-13T06:18:03.5133018Z hint:
+2026-01-13T06:18:03.5133590Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-01-13T06:18:03.5134648Z Initialized empty Git repository in /home/runner/work/monitoring-arch/monitoring-arch/.git/
+2026-01-13T06:18:03.5144514Z [command]/usr/bin/git remote add origin https://github.com/Fudheryk/monitoring-arch
+2026-01-13T06:18:03.5177014Z ##[endgroup]
+2026-01-13T06:18:03.5177607Z ##[group]Disabling automatic garbage collection
+2026-01-13T06:18:03.5181150Z [command]/usr/bin/git config --local gc.auto 0
+2026-01-13T06:18:03.5209001Z ##[endgroup]
+2026-01-13T06:18:03.5209544Z ##[group]Setting up auth
+2026-01-13T06:18:03.5215146Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-01-13T06:18:03.5243855Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-01-13T06:18:03.5575407Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-01-13T06:18:03.5604407Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-01-13T06:18:03.5830946Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-01-13T06:18:03.5861029Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-01-13T06:18:03.6084063Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-01-13T06:18:03.6117823Z ##[endgroup]
+2026-01-13T06:18:03.6118232Z ##[group]Fetching the repository
+2026-01-13T06:18:03.6128078Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +d40be8550ce1d9f0881b18f2c48c94a1e88699c2:refs/remotes/pull/2/merge
+2026-01-13T06:18:03.8018724Z From https://github.com/Fudheryk/monitoring-arch
+2026-01-13T06:18:03.8020916Z  * [new ref]         d40be8550ce1d9f0881b18f2c48c94a1e88699c2 -> pull/2/merge
+2026-01-13T06:18:03.8052334Z ##[endgroup]
+2026-01-13T06:18:03.8053178Z ##[group]Determining the checkout info
+2026-01-13T06:18:03.8056219Z ##[endgroup]
+2026-01-13T06:18:03.8061695Z [command]/usr/bin/git sparse-checkout disable
+2026-01-13T06:18:03.8103141Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-01-13T06:18:03.8128683Z ##[group]Checking out the ref
+2026-01-13T06:18:03.8133205Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/2/merge
+2026-01-13T06:18:03.8338724Z Note: switching to 'refs/remotes/pull/2/merge'.
+2026-01-13T06:18:03.8339398Z 
+2026-01-13T06:18:03.8339899Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-01-13T06:18:03.8341871Z changes and commit them, and you can discard any commits you make in this
+2026-01-13T06:18:03.8342964Z state without impacting any branches by switching back to a branch.
+2026-01-13T06:18:03.8343480Z 
+2026-01-13T06:18:03.8343826Z If you want to create a new branch to retain commits you create, you may
+2026-01-13T06:18:03.8344604Z do so (now or later) by using -c with the switch command. Example:
+2026-01-13T06:18:03.8345068Z 
+2026-01-13T06:18:03.8345241Z   git switch -c <new-branch-name>
+2026-01-13T06:18:03.8345533Z 
+2026-01-13T06:18:03.8345715Z Or undo this operation with:
+2026-01-13T06:18:03.8345979Z 
+2026-01-13T06:18:03.8346112Z   git switch -
+2026-01-13T06:18:03.8346331Z 
+2026-01-13T06:18:03.8346707Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-01-13T06:18:03.8347236Z 
+2026-01-13T06:18:03.8347835Z HEAD is now at d40be85 Merge a88bba6c627d4df6b56a4157372f54d22c8720b1 into c0dd612a016bfd4cf75d2a34c668ab1b6d1e7a74
+2026-01-13T06:18:03.8349579Z ##[endgroup]
+2026-01-13T06:18:03.8385709Z [command]/usr/bin/git log -1 --format=%H
+2026-01-13T06:18:03.8408368Z d40be8550ce1d9f0881b18f2c48c94a1e88699c2
+2026-01-13T06:18:03.8616529Z ##[group]Run actions/setup-python@v5
+2026-01-13T06:18:03.8616817Z with:
+2026-01-13T06:18:03.8617005Z   python-version: 3.11
+2026-01-13T06:18:03.8617223Z   check-latest: false
+2026-01-13T06:18:03.8617560Z   token: ***
+2026-01-13T06:18:03.8617749Z   update-environment: true
+2026-01-13T06:18:03.8617980Z   allow-prereleases: false
+2026-01-13T06:18:03.8618188Z   freethreaded: false
+2026-01-13T06:18:03.8618555Z env:
+2026-01-13T06:18:03.8618720Z   MIN_COVERAGE: 70
+2026-01-13T06:18:03.8618906Z   PYTHONPATH: server
+2026-01-13T06:18:03.8619098Z   ENV_FILE: /dev/null
+2026-01-13T06:18:03.8619318Z   DATABASE_URL: sqlite+pysqlite:///:memory:
+2026-01-13T06:18:03.8619630Z   REDIS_URL: redis://localhost:6379/0
+2026-01-13T06:18:03.8619873Z   STUB_SLACK: 1
+2026-01-13T06:18:03.8620057Z   ALERT_REMINDER_MINUTES: 1
+2026-01-13T06:18:03.8620265Z   KEY: dev-apikey-123
+2026-01-13T06:18:03.8620486Z   API: http://localhost:8000
+2026-01-13T06:18:03.8620700Z ##[endgroup]
+2026-01-13T06:18:04.0272347Z ##[group]Installed versions
+2026-01-13T06:18:04.0377580Z Successfully set up CPython (3.11.14)
+2026-01-13T06:18:04.0378796Z ##[endgroup]
+2026-01-13T06:18:04.1566611Z ##[group]Run actions/cache@v4
+2026-01-13T06:18:04.1566934Z with:
+2026-01-13T06:18:04.1567145Z   path: ~/.cache/pip
+2026-01-13T06:18:04.1567664Z   key: Linux-py311-pip-db6a1d09c249ecb4d5ef557f4a88b57cf39fb4be439410dd6f870a634e14b34e-v2
+2026-01-13T06:18:04.1568647Z   restore-keys: Linux-py311-pip-db6a1d09c249ecb4d5ef557f4a88b57cf39fb4be439410dd6f870a634e14b34e
+Linux-py311-pip-
+
+2026-01-13T06:18:04.1569367Z   enableCrossOsArchive: false
+2026-01-13T06:18:04.1569665Z   fail-on-cache-miss: false
+2026-01-13T06:18:04.1569928Z   lookup-only: false
+2026-01-13T06:18:04.1570167Z   save-always: false
+2026-01-13T06:18:04.1570386Z env:
+2026-01-13T06:18:04.1570588Z   MIN_COVERAGE: 70
+2026-01-13T06:18:04.1570814Z   PYTHONPATH: server
+2026-01-13T06:18:04.1571049Z   ENV_FILE: /dev/null
+2026-01-13T06:18:04.1571323Z   DATABASE_URL: sqlite+pysqlite:///:memory:
+2026-01-13T06:18:04.1571705Z   REDIS_URL: redis://localhost:6379/0
+2026-01-13T06:18:04.1572012Z   STUB_SLACK: 1
+2026-01-13T06:18:04.1572275Z   ALERT_REMINDER_MINUTES: 1
+2026-01-13T06:18:04.1572718Z   KEY: dev-apikey-123
+2026-01-13T06:18:04.1573005Z   API: http://localhost:8000
+2026-01-13T06:18:04.1573367Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:04.1573897Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.14/x64/lib/pkgconfig
+2026-01-13T06:18:04.1574420Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:04.1574876Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:04.1575278Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:04.1575637Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.14/x64/lib
+2026-01-13T06:18:04.1575948Z ##[endgroup]
+2026-01-13T06:18:04.3505391Z Cache not found for input keys: Linux-py311-pip-db6a1d09c249ecb4d5ef557f4a88b57cf39fb4be439410dd6f870a634e14b34e-v2, Linux-py311-pip-db6a1d09c249ecb4d5ef557f4a88b57cf39fb4be439410dd6f870a634e14b34e, Linux-py311-pip-
+2026-01-13T06:18:04.3585697Z ##[group]Run python -m pip install --upgrade pip
+2026-01-13T06:18:04.3586138Z [36;1mpython -m pip install --upgrade pip[0m
+2026-01-13T06:18:04.3586458Z [36;1mpip install -r requirements-dev.txt[0m
+2026-01-13T06:18:04.3586784Z [36;1mpip install pytest-split pytest-xdist coverage[0m
+2026-01-13T06:18:04.3631312Z shell: /usr/bin/bash -e {0}
+2026-01-13T06:18:04.3631563Z env:
+2026-01-13T06:18:04.3631736Z   MIN_COVERAGE: 70
+2026-01-13T06:18:04.3631926Z   PYTHONPATH: server
+2026-01-13T06:18:04.3632131Z   ENV_FILE: /dev/null
+2026-01-13T06:18:04.3632357Z   DATABASE_URL: sqlite+pysqlite:///:memory:
+2026-01-13T06:18:04.3632923Z   REDIS_URL: redis://localhost:6379/0
+2026-01-13T06:18:04.3633185Z   STUB_SLACK: 1
+2026-01-13T06:18:04.3633364Z   ALERT_REMINDER_MINUTES: 1
+2026-01-13T06:18:04.3633575Z   KEY: dev-apikey-123
+2026-01-13T06:18:04.3633779Z   API: http://localhost:8000
+2026-01-13T06:18:04.3634074Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:04.3634517Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.14/x64/lib/pkgconfig
+2026-01-13T06:18:04.3634911Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:04.3635265Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:04.3635619Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:04.3636188Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.14/x64/lib
+2026-01-13T06:18:04.3636487Z ##[endgroup]
+2026-01-13T06:18:05.0689030Z Requirement already satisfied: pip in /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages (25.3)
+2026-01-13T06:18:06.0056237Z Collecting SQLAlchemy>=1.4 (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 1))
+2026-01-13T06:18:06.0634117Z   Downloading sqlalchemy-2.0.45-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (9.5 kB)
+2026-01-13T06:18:06.2270499Z Collecting psycopg-binary>=2.9 (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 2))
+2026-01-13T06:18:06.2324642Z   Downloading psycopg_binary-3.3.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.7 kB)
+2026-01-13T06:18:06.2829581Z Collecting fastapi (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 3))
+2026-01-13T06:18:06.2869988Z   Downloading fastapi-0.128.0-py3-none-any.whl.metadata (30 kB)
+2026-01-13T06:18:06.3408736Z Collecting uvicorn (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 4))
+2026-01-13T06:18:06.3451015Z   Downloading uvicorn-0.40.0-py3-none-any.whl.metadata (6.7 kB)
+2026-01-13T06:18:06.3780088Z Collecting celery (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:06.3818274Z   Downloading celery-5.6.2-py3-none-any.whl.metadata (23 kB)
+2026-01-13T06:18:06.4290739Z Collecting redis (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 6))
+2026-01-13T06:18:06.4336908Z   Downloading redis-7.1.0-py3-none-any.whl.metadata (12 kB)
+2026-01-13T06:18:06.4573666Z Collecting alembic>=1.11.1 (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 7))
+2026-01-13T06:18:06.4620285Z   Downloading alembic-1.18.0-py3-none-any.whl.metadata (7.2 kB)
+2026-01-13T06:18:06.4760021Z Collecting email-validator>=2.1.0.post1 (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 8))
+2026-01-13T06:18:06.4795027Z   Downloading email_validator-2.3.0-py3-none-any.whl.metadata (26 kB)
+2026-01-13T06:18:06.5002090Z Collecting httpx (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 9))
+2026-01-13T06:18:06.5080627Z   Downloading httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+2026-01-13T06:18:06.5269319Z Collecting PyJWT==2.* (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 10))
+2026-01-13T06:18:06.5307455Z   Downloading PyJWT-2.10.1-py3-none-any.whl.metadata (4.0 kB)
+2026-01-13T06:18:06.5438994Z Collecting passlib==1.7.* (from passlib[bcrypt]==1.7.*->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 11))
+2026-01-13T06:18:06.5473387Z   Downloading passlib-1.7.4-py2.py3-none-any.whl.metadata (1.7 kB)
+2026-01-13T06:18:06.5611594Z Collecting python-jose==3.* (from python-jose[cryptography]==3.*->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 12))
+2026-01-13T06:18:06.5646254Z   Downloading python_jose-3.5.0-py2.py3-none-any.whl.metadata (5.5 kB)
+2026-01-13T06:18:06.6052834Z Collecting bcrypt==3.2.2 (from -r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 13))
+2026-01-13T06:18:06.6103195Z   Downloading bcrypt-3.2.2-cp36-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_24_x86_64.whl.metadata (8.3 kB)
+2026-01-13T06:18:06.6391225Z Collecting requests (from -r requirements-dev.txt (line 3))
+2026-01-13T06:18:06.6427310Z   Downloading requests-2.32.5-py3-none-any.whl.metadata (4.9 kB)
+2026-01-13T06:18:06.6920751Z Collecting black (from -r requirements-dev.txt (line 4))
+2026-01-13T06:18:06.6957319Z   Downloading black-25.12.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (86 kB)
+2026-01-13T06:18:07.0701947Z Collecting ruff (from -r requirements-dev.txt (line 5))
+2026-01-13T06:18:07.0741983Z   Downloading ruff-0.14.11-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (26 kB)
+2026-01-13T06:18:07.0909523Z Collecting pydantic-settings (from -r requirements-dev.txt (line 7))
+2026-01-13T06:18:07.0945957Z   Downloading pydantic_settings-2.12.0-py3-none-any.whl.metadata (3.4 kB)
+2026-01-13T06:18:07.1298940Z Collecting pytest (from -r requirements-dev.txt (line 8))
+2026-01-13T06:18:07.1335368Z   Downloading pytest-9.0.2-py3-none-any.whl.metadata (7.6 kB)
+2026-01-13T06:18:07.1462484Z Collecting pytest-env (from -r requirements-dev.txt (line 9))
+2026-01-13T06:18:07.1498966Z   Downloading pytest_env-1.2.0-py3-none-any.whl.metadata (5.1 kB)
+2026-01-13T06:18:07.1660895Z Collecting pytest-cov>=4.1 (from -r requirements-dev.txt (line 10))
+2026-01-13T06:18:07.1696737Z   Downloading pytest_cov-7.0.0-py3-none-any.whl.metadata (31 kB)
+2026-01-13T06:18:07.1822021Z Collecting pytest-dotenv>=0.5.2 (from -r requirements-dev.txt (line 11))
+2026-01-13T06:18:07.1858874Z   Downloading pytest_dotenv-0.5.2-py3-none-any.whl.metadata (2.8 kB)
+2026-01-13T06:18:07.2011953Z Collecting pytest-randomly>=3.15 (from -r requirements-dev.txt (line 12))
+2026-01-13T06:18:07.2064184Z   Downloading pytest_randomly-4.0.1-py3-none-any.whl.metadata (8.7 kB)
+2026-01-13T06:18:07.2232904Z Collecting pytest-xdist>=3.6 (from -r requirements-dev.txt (line 13))
+2026-01-13T06:18:07.2267341Z   Downloading pytest_xdist-3.8.0-py3-none-any.whl.metadata (3.0 kB)
+2026-01-13T06:18:07.2390588Z Collecting pytest-timeout>=2.3.1 (from -r requirements-dev.txt (line 14))
+2026-01-13T06:18:07.2424790Z   Downloading pytest_timeout-2.4.0-py3-none-any.whl.metadata (20 kB)
+2026-01-13T06:18:07.3408371Z Collecting cffi>=1.1 (from bcrypt==3.2.2->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 13))
+2026-01-13T06:18:07.3449706Z   Downloading cffi-2.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.6 kB)
+2026-01-13T06:18:07.3600449Z Collecting ecdsa!=0.15 (from python-jose==3.*->python-jose[cryptography]==3.*->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 12))
+2026-01-13T06:18:07.3634950Z   Downloading ecdsa-0.19.1-py2.py3-none-any.whl.metadata (29 kB)
+2026-01-13T06:18:07.3823902Z Collecting rsa!=4.1.1,!=4.4,<5.0,>=4.0 (from python-jose==3.*->python-jose[cryptography]==3.*->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 12))
+2026-01-13T06:18:07.3858697Z   Downloading rsa-4.9.1-py3-none-any.whl.metadata (5.6 kB)
+2026-01-13T06:18:07.4069514Z Collecting pyasn1>=0.5.0 (from python-jose==3.*->python-jose[cryptography]==3.*->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 12))
+2026-01-13T06:18:07.4105386Z   Downloading pyasn1-0.6.1-py3-none-any.whl.metadata (8.4 kB)
+2026-01-13T06:18:07.6294829Z Collecting cryptography>=3.4.0 (from python-jose[cryptography]==3.*->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 12))
+2026-01-13T06:18:07.6343566Z   Downloading cryptography-46.0.3-cp311-abi3-manylinux_2_34_x86_64.whl.metadata (5.7 kB)
+2026-01-13T06:18:07.7626212Z Collecting greenlet>=1 (from SQLAlchemy>=1.4->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 1))
+2026-01-13T06:18:07.7672827Z   Downloading greenlet-3.3.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl.metadata (4.1 kB)
+2026-01-13T06:18:07.7859338Z Collecting typing-extensions>=4.6.0 (from SQLAlchemy>=1.4->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 1))
+2026-01-13T06:18:07.7896258Z   Downloading typing_extensions-4.15.0-py3-none-any.whl.metadata (3.3 kB)
+2026-01-13T06:18:07.8185925Z Collecting starlette<0.51.0,>=0.40.0 (from fastapi->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 3))
+2026-01-13T06:18:07.8222409Z   Downloading starlette-0.50.0-py3-none-any.whl.metadata (6.3 kB)
+2026-01-13T06:18:07.9359461Z Collecting pydantic>=2.7.0 (from fastapi->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 3))
+2026-01-13T06:18:07.9400134Z   Downloading pydantic-2.12.5-py3-none-any.whl.metadata (90 kB)
+2026-01-13T06:18:07.9615990Z Collecting annotated-doc>=0.0.2 (from fastapi->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 3))
+2026-01-13T06:18:07.9652910Z   Downloading annotated_doc-0.0.4-py3-none-any.whl.metadata (6.6 kB)
+2026-01-13T06:18:07.9873597Z Collecting anyio<5,>=3.6.2 (from starlette<0.51.0,>=0.40.0->fastapi->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 3))
+2026-01-13T06:18:07.9909839Z   Downloading anyio-4.12.1-py3-none-any.whl.metadata (4.3 kB)
+2026-01-13T06:18:08.0105000Z Collecting idna>=2.8 (from anyio<5,>=3.6.2->starlette<0.51.0,>=0.40.0->fastapi->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 3))
+2026-01-13T06:18:08.0141078Z   Downloading idna-3.11-py3-none-any.whl.metadata (8.4 kB)
+2026-01-13T06:18:08.0379508Z Collecting click>=7.0 (from uvicorn->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 4))
+2026-01-13T06:18:08.0414682Z   Downloading click-8.3.1-py3-none-any.whl.metadata (2.6 kB)
+2026-01-13T06:18:08.0525484Z Collecting h11>=0.8 (from uvicorn->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 4))
+2026-01-13T06:18:08.0563247Z   Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+2026-01-13T06:18:08.0810056Z Collecting billiard<5.0,>=4.2.1 (from celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:08.0848613Z   Downloading billiard-4.2.4-py3-none-any.whl.metadata (4.8 kB)
+2026-01-13T06:18:08.1126947Z Collecting kombu>=5.6.0 (from celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:08.1165861Z   Downloading kombu-5.6.2-py3-none-any.whl.metadata (3.5 kB)
+2026-01-13T06:18:08.1327549Z Collecting vine<6.0,>=5.1.0 (from celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:08.1365753Z   Downloading vine-5.1.0-py3-none-any.whl.metadata (2.7 kB)
+2026-01-13T06:18:08.1598049Z Collecting click-didyoumean>=0.3.0 (from celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:08.1634628Z   Downloading click_didyoumean-0.3.1-py3-none-any.whl.metadata (3.9 kB)
+2026-01-13T06:18:08.1744548Z Collecting click-repl>=0.2.0 (from celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:08.1781289Z   Downloading click_repl-0.3.0-py3-none-any.whl.metadata (3.6 kB)
+2026-01-13T06:18:08.1887080Z Collecting click-plugins>=1.1.1 (from celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:08.1924973Z   Downloading click_plugins-1.1.1.2-py2.py3-none-any.whl.metadata (6.5 kB)
+2026-01-13T06:18:08.2073236Z Collecting python-dateutil>=2.8.2 (from celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:08.2109724Z   Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+2026-01-13T06:18:08.2255924Z Collecting tzlocal (from celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:08.2293330Z   Downloading tzlocal-5.3.1-py3-none-any.whl.metadata (7.6 kB)
+2026-01-13T06:18:08.2502114Z Collecting Mako (from alembic>=1.11.1->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 7))
+2026-01-13T06:18:08.2539036Z   Downloading mako-1.3.10-py3-none-any.whl.metadata (2.9 kB)
+2026-01-13T06:18:08.2733061Z Collecting dnspython>=2.0.0 (from email-validator>=2.1.0.post1->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 8))
+2026-01-13T06:18:08.2819896Z   Downloading dnspython-2.8.0-py3-none-any.whl.metadata (5.7 kB)
+2026-01-13T06:18:08.3087710Z Collecting certifi (from httpx->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 9))
+2026-01-13T06:18:08.3126716Z   Downloading certifi-2026.1.4-py3-none-any.whl.metadata (2.5 kB)
+2026-01-13T06:18:08.3324295Z Collecting httpcore==1.* (from httpx->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 9))
+2026-01-13T06:18:08.3359563Z   Downloading httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+2026-01-13T06:18:08.4720157Z Collecting charset_normalizer<4,>=2 (from requests->-r requirements-dev.txt (line 3))
+2026-01-13T06:18:08.4769836Z   Downloading charset_normalizer-3.4.4-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (37 kB)
+2026-01-13T06:18:08.5109703Z Collecting urllib3<3,>=1.21.1 (from requests->-r requirements-dev.txt (line 3))
+2026-01-13T06:18:08.5151086Z   Downloading urllib3-2.6.3-py3-none-any.whl.metadata (6.9 kB)
+2026-01-13T06:18:08.5417427Z Collecting mypy-extensions>=0.4.3 (from black->-r requirements-dev.txt (line 4))
+2026-01-13T06:18:08.5456402Z   Downloading mypy_extensions-1.1.0-py3-none-any.whl.metadata (1.1 kB)
+2026-01-13T06:18:08.5610913Z Collecting packaging>=22.0 (from black->-r requirements-dev.txt (line 4))
+2026-01-13T06:18:08.5648400Z   Downloading packaging-25.0-py3-none-any.whl.metadata (3.3 kB)
+2026-01-13T06:18:08.5780426Z Collecting pathspec>=0.9.0 (from black->-r requirements-dev.txt (line 4))
+2026-01-13T06:18:08.5827033Z   Downloading pathspec-1.0.3-py3-none-any.whl.metadata (13 kB)
+2026-01-13T06:18:08.6024180Z Collecting platformdirs>=2 (from black->-r requirements-dev.txt (line 4))
+2026-01-13T06:18:08.6069631Z   Downloading platformdirs-4.5.1-py3-none-any.whl.metadata (12 kB)
+2026-01-13T06:18:08.6194340Z Collecting pytokens>=0.3.0 (from black->-r requirements-dev.txt (line 4))
+2026-01-13T06:18:08.6235187Z   Downloading pytokens-0.3.0-py3-none-any.whl.metadata (2.0 kB)
+2026-01-13T06:18:08.6436060Z Collecting python-dotenv>=0.21.0 (from pydantic-settings->-r requirements-dev.txt (line 7))
+2026-01-13T06:18:08.6476522Z   Downloading python_dotenv-1.2.1-py3-none-any.whl.metadata (25 kB)
+2026-01-13T06:18:08.6593341Z Collecting typing-inspection>=0.4.0 (from pydantic-settings->-r requirements-dev.txt (line 7))
+2026-01-13T06:18:08.6630300Z   Downloading typing_inspection-0.4.2-py3-none-any.whl.metadata (2.6 kB)
+2026-01-13T06:18:08.6740490Z Collecting iniconfig>=1.0.1 (from pytest->-r requirements-dev.txt (line 8))
+2026-01-13T06:18:08.6778746Z   Downloading iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)
+2026-01-13T06:18:08.6907218Z Collecting pluggy<2,>=1.5 (from pytest->-r requirements-dev.txt (line 8))
+2026-01-13T06:18:08.6943881Z   Downloading pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+2026-01-13T06:18:08.7138866Z Collecting pygments>=2.7.2 (from pytest->-r requirements-dev.txt (line 8))
+2026-01-13T06:18:08.7183326Z   Downloading pygments-2.19.2-py3-none-any.whl.metadata (2.5 kB)
+2026-01-13T06:18:09.0765827Z Collecting coverage>=7.10.6 (from coverage[toml]>=7.10.6->pytest-cov>=4.1->-r requirements-dev.txt (line 10))
+2026-01-13T06:18:09.0805792Z   Downloading coverage-7.13.1-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (8.5 kB)
+2026-01-13T06:18:09.1813003Z Collecting execnet>=2.1 (from pytest-xdist>=3.6->-r requirements-dev.txt (line 13))
+2026-01-13T06:18:09.1851276Z   Downloading execnet-2.1.2-py3-none-any.whl.metadata (2.9 kB)
+2026-01-13T06:18:09.2015104Z Collecting pycparser (from cffi>=1.1->bcrypt==3.2.2->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 13))
+2026-01-13T06:18:09.2053917Z   Downloading pycparser-2.23-py3-none-any.whl.metadata (993 bytes)
+2026-01-13T06:18:09.2430782Z Collecting prompt-toolkit>=3.0.36 (from click-repl>=0.2.0->celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:09.2471988Z   Downloading prompt_toolkit-3.0.52-py3-none-any.whl.metadata (6.4 kB)
+2026-01-13T06:18:09.2691941Z Collecting six>=1.9.0 (from ecdsa!=0.15->python-jose==3.*->python-jose[cryptography]==3.*->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 12))
+2026-01-13T06:18:09.2727365Z   Downloading six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+2026-01-13T06:18:09.2970264Z Collecting amqp<6.0.0,>=5.1.1 (from kombu>=5.6.0->celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:09.3008256Z   Downloading amqp-5.3.1-py3-none-any.whl.metadata (8.9 kB)
+2026-01-13T06:18:09.3154136Z Collecting tzdata>=2025.2 (from kombu>=5.6.0->celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:09.3188466Z   Downloading tzdata-2025.3-py2.py3-none-any.whl.metadata (1.4 kB)
+2026-01-13T06:18:09.3421612Z Collecting wcwidth (from prompt-toolkit>=3.0.36->click-repl>=0.2.0->celery->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 5))
+2026-01-13T06:18:09.3464671Z   Downloading wcwidth-0.2.14-py2.py3-none-any.whl.metadata (15 kB)
+2026-01-13T06:18:09.3615200Z Collecting annotated-types>=0.6.0 (from pydantic>=2.7.0->fastapi->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 3))
+2026-01-13T06:18:09.3650193Z   Downloading annotated_types-0.7.0-py3-none-any.whl.metadata (15 kB)
+2026-01-13T06:18:10.0655327Z Collecting pydantic-core==2.41.5 (from pydantic>=2.7.0->fastapi->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 3))
+2026-01-13T06:18:10.0695624Z   Downloading pydantic_core-2.41.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (7.3 kB)
+2026-01-13T06:18:10.1505386Z Collecting MarkupSafe>=0.9.2 (from Mako->alembic>=1.11.1->-r /home/runner/work/monitoring-arch/monitoring-arch/requirements.txt (line 7))
+2026-01-13T06:18:10.1544379Z   Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+2026-01-13T06:18:10.1720186Z Downloading bcrypt-3.2.2-cp36-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_24_x86_64.whl (62 kB)
+2026-01-13T06:18:10.1779688Z Downloading PyJWT-2.10.1-py3-none-any.whl (22 kB)
+2026-01-13T06:18:10.1838858Z Downloading passlib-1.7.4-py2.py3-none-any.whl (525 kB)
+2026-01-13T06:18:10.1918298Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 525.6/525.6 kB 79.5 MB/s  0:00:00
+2026-01-13T06:18:10.1957521Z Downloading python_jose-3.5.0-py2.py3-none-any.whl (34 kB)
+2026-01-13T06:18:10.2017196Z Downloading rsa-4.9.1-py3-none-any.whl (34 kB)
+2026-01-13T06:18:10.2085486Z Downloading sqlalchemy-2.0.45-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (3.3 MB)
+2026-01-13T06:18:10.2261628Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.3/3.3 MB 203.3 MB/s  0:00:00
+2026-01-13T06:18:10.2301191Z Downloading psycopg_binary-3.3.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (5.2 MB)
+2026-01-13T06:18:10.2620165Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5.2/5.2 MB 170.8 MB/s  0:00:00
+2026-01-13T06:18:10.2659088Z Downloading fastapi-0.128.0-py3-none-any.whl (103 kB)
+2026-01-13T06:18:10.2724477Z Downloading starlette-0.50.0-py3-none-any.whl (74 kB)
+2026-01-13T06:18:10.2789231Z Downloading anyio-4.12.1-py3-none-any.whl (113 kB)
+2026-01-13T06:18:10.2883810Z Downloading uvicorn-0.40.0-py3-none-any.whl (68 kB)
+2026-01-13T06:18:10.2942912Z Downloading celery-5.6.2-py3-none-any.whl (445 kB)
+2026-01-13T06:18:10.3020967Z Downloading billiard-4.2.4-py3-none-any.whl (87 kB)
+2026-01-13T06:18:10.3080627Z Downloading click-8.3.1-py3-none-any.whl (108 kB)
+2026-01-13T06:18:10.3140157Z Downloading vine-5.1.0-py3-none-any.whl (9.6 kB)
+2026-01-13T06:18:10.3194983Z Downloading redis-7.1.0-py3-none-any.whl (354 kB)
+2026-01-13T06:18:10.3272860Z Downloading alembic-1.18.0-py3-none-any.whl (260 kB)
+2026-01-13T06:18:10.3374819Z Downloading email_validator-2.3.0-py3-none-any.whl (35 kB)
+2026-01-13T06:18:10.3435386Z Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+2026-01-13T06:18:10.3494729Z Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+2026-01-13T06:18:10.3555074Z Downloading requests-2.32.5-py3-none-any.whl (64 kB)
+2026-01-13T06:18:10.3614684Z Downloading charset_normalizer-3.4.4-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (151 kB)
+2026-01-13T06:18:10.3674660Z Downloading idna-3.11-py3-none-any.whl (71 kB)
+2026-01-13T06:18:10.3732899Z Downloading urllib3-2.6.3-py3-none-any.whl (131 kB)
+2026-01-13T06:18:10.3795525Z Downloading black-25.12.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.8 MB)
+2026-01-13T06:18:10.3926988Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 154.5 MB/s  0:00:00
+2026-01-13T06:18:10.3969884Z Downloading ruff-0.14.11-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (13.8 MB)
+2026-01-13T06:18:10.4552985Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 13.8/13.8 MB 241.2 MB/s  0:00:00
+2026-01-13T06:18:10.4593899Z Downloading pydantic_settings-2.12.0-py3-none-any.whl (51 kB)
+2026-01-13T06:18:10.4652468Z Downloading pytest-9.0.2-py3-none-any.whl (374 kB)
+2026-01-13T06:18:10.4724488Z Downloading pluggy-1.6.0-py3-none-any.whl (20 kB)
+2026-01-13T06:18:10.4779242Z Downloading pytest_env-1.2.0-py3-none-any.whl (6.3 kB)
+2026-01-13T06:18:10.4832928Z Downloading pytest_cov-7.0.0-py3-none-any.whl (22 kB)
+2026-01-13T06:18:10.4890770Z Downloading pytest_dotenv-0.5.2-py3-none-any.whl (4.0 kB)
+2026-01-13T06:18:10.4952826Z Downloading pytest_randomly-4.0.1-py3-none-any.whl (8.3 kB)
+2026-01-13T06:18:10.5007338Z Downloading pytest_xdist-3.8.0-py3-none-any.whl (46 kB)
+2026-01-13T06:18:10.5103788Z Downloading pytest_timeout-2.4.0-py3-none-any.whl (14 kB)
+2026-01-13T06:18:10.5159743Z Downloading annotated_doc-0.0.4-py3-none-any.whl (5.3 kB)
+2026-01-13T06:18:10.5215273Z Downloading certifi-2026.1.4-py3-none-any.whl (152 kB)
+2026-01-13T06:18:10.5276868Z Downloading cffi-2.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (215 kB)
+2026-01-13T06:18:10.5347770Z Downloading click_didyoumean-0.3.1-py3-none-any.whl (3.6 kB)
+2026-01-13T06:18:10.5403429Z Downloading click_plugins-1.1.1.2-py2.py3-none-any.whl (11 kB)
+2026-01-13T06:18:10.5460387Z Downloading click_repl-0.3.0-py3-none-any.whl (10 kB)
+2026-01-13T06:18:10.5517286Z Downloading coverage-7.13.1-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (251 kB)
+2026-01-13T06:18:10.5581472Z Downloading cryptography-46.0.3-cp311-abi3-manylinux_2_34_x86_64.whl (4.5 MB)
+2026-01-13T06:18:10.5792913Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.5/4.5 MB 224.1 MB/s  0:00:00
+2026-01-13T06:18:10.5827741Z Downloading dnspython-2.8.0-py3-none-any.whl (331 kB)
+2026-01-13T06:18:10.5896597Z Downloading ecdsa-0.19.1-py2.py3-none-any.whl (150 kB)
+2026-01-13T06:18:10.5954429Z Downloading execnet-2.1.2-py3-none-any.whl (40 kB)
+2026-01-13T06:18:10.6013386Z Downloading greenlet-3.3.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (590 kB)
+2026-01-13T06:18:10.6068962Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 590.2/590.2 kB 97.8 MB/s  0:00:00
+2026-01-13T06:18:10.6106839Z Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+2026-01-13T06:18:10.6178433Z Downloading iniconfig-2.3.0-py3-none-any.whl (7.5 kB)
+2026-01-13T06:18:10.6236882Z Downloading kombu-5.6.2-py3-none-any.whl (214 kB)
+2026-01-13T06:18:10.6299948Z Downloading amqp-5.3.1-py3-none-any.whl (50 kB)
+2026-01-13T06:18:10.6358134Z Downloading mypy_extensions-1.1.0-py3-none-any.whl (5.0 kB)
+2026-01-13T06:18:10.6413296Z Downloading packaging-25.0-py3-none-any.whl (66 kB)
+2026-01-13T06:18:10.6472326Z Downloading pathspec-1.0.3-py3-none-any.whl (55 kB)
+2026-01-13T06:18:10.6530390Z Downloading platformdirs-4.5.1-py3-none-any.whl (18 kB)
+2026-01-13T06:18:10.6585725Z Downloading prompt_toolkit-3.0.52-py3-none-any.whl (391 kB)
+2026-01-13T06:18:10.6656625Z Downloading pyasn1-0.6.1-py3-none-any.whl (83 kB)
+2026-01-13T06:18:10.6716042Z Downloading pydantic-2.12.5-py3-none-any.whl (463 kB)
+2026-01-13T06:18:10.6792846Z Downloading pydantic_core-2.41.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+2026-01-13T06:18:10.6912267Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 185.5 MB/s  0:00:00
+2026-01-13T06:18:10.6949243Z Downloading annotated_types-0.7.0-py3-none-any.whl (13 kB)
+2026-01-13T06:18:10.7006596Z Downloading pygments-2.19.2-py3-none-any.whl (1.2 MB)
+2026-01-13T06:18:10.7088991Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.2/1.2 MB 162.6 MB/s  0:00:00
+2026-01-13T06:18:10.7123390Z Downloading python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+2026-01-13T06:18:10.7186610Z Downloading python_dotenv-1.2.1-py3-none-any.whl (21 kB)
+2026-01-13T06:18:10.7239882Z Downloading pytokens-0.3.0-py3-none-any.whl (12 kB)
+2026-01-13T06:18:10.7335060Z Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+2026-01-13T06:18:10.7393475Z Downloading typing_extensions-4.15.0-py3-none-any.whl (44 kB)
+2026-01-13T06:18:10.7452701Z Downloading typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+2026-01-13T06:18:10.7506863Z Downloading tzdata-2025.3-py2.py3-none-any.whl (348 kB)
+2026-01-13T06:18:10.7576752Z Downloading mako-1.3.10-py3-none-any.whl (78 kB)
+2026-01-13T06:18:10.7644243Z Downloading markupsafe-3.0.3-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+2026-01-13T06:18:10.7702033Z Downloading pycparser-2.23-py3-none-any.whl (118 kB)
+2026-01-13T06:18:10.7760933Z Downloading tzlocal-5.3.1-py3-none-any.whl (18 kB)
+2026-01-13T06:18:10.7813664Z Downloading wcwidth-0.2.14-py2.py3-none-any.whl (37 kB)
+2026-01-13T06:18:10.9721345Z Installing collected packages: passlib, wcwidth, vine, urllib3, tzlocal, tzdata, typing-extensions, six, ruff, redis, pytokens, python-dotenv, PyJWT, pygments, pycparser, pyasn1, psycopg-binary, pluggy, platformdirs, pathspec, packaging, mypy-extensions, MarkupSafe, iniconfig, idna, h11, greenlet, execnet, dnspython, coverage, click, charset_normalizer, certifi, billiard, annotated-types, annotated-doc, uvicorn, typing-inspection, SQLAlchemy, rsa, requests, python-dateutil, pytest, pydantic-core, prompt-toolkit, Mako, httpcore, email-validator, ecdsa, click-plugins, click-didyoumean, cffi, black, anyio, amqp, starlette, python-jose, pytest-xdist, pytest-timeout, pytest-randomly, pytest-env, pytest-dotenv, pytest-cov, pydantic, kombu, httpx, cryptography, click-repl, bcrypt, alembic, pydantic-settings, fastapi, celery
+2026-01-13T06:18:16.8771545Z 
+2026-01-13T06:18:16.8813586Z Successfully installed Mako-1.3.10 MarkupSafe-3.0.3 PyJWT-2.10.1 SQLAlchemy-2.0.45 alembic-1.18.0 amqp-5.3.1 annotated-doc-0.0.4 annotated-types-0.7.0 anyio-4.12.1 bcrypt-3.2.2 billiard-4.2.4 black-25.12.0 celery-5.6.2 certifi-2026.1.4 cffi-2.0.0 charset_normalizer-3.4.4 click-8.3.1 click-didyoumean-0.3.1 click-plugins-1.1.1.2 click-repl-0.3.0 coverage-7.13.1 cryptography-46.0.3 dnspython-2.8.0 ecdsa-0.19.1 email-validator-2.3.0 execnet-2.1.2 fastapi-0.128.0 greenlet-3.3.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 idna-3.11 iniconfig-2.3.0 kombu-5.6.2 mypy-extensions-1.1.0 packaging-25.0 passlib-1.7.4 pathspec-1.0.3 platformdirs-4.5.1 pluggy-1.6.0 prompt-toolkit-3.0.52 psycopg-binary-3.3.2 pyasn1-0.6.1 pycparser-2.23 pydantic-2.12.5 pydantic-core-2.41.5 pydantic-settings-2.12.0 pygments-2.19.2 pytest-9.0.2 pytest-cov-7.0.0 pytest-dotenv-0.5.2 pytest-env-1.2.0 pytest-randomly-4.0.1 pytest-timeout-2.4.0 pytest-xdist-3.8.0 python-dateutil-2.9.0.post0 python-dotenv-1.2.1 python-jose-3.5.0 pytokens-0.3.0 redis-7.1.0 requests-2.32.5 rsa-4.9.1 ruff-0.14.11 six-1.17.0 starlette-0.50.0 typing-extensions-4.15.0 typing-inspection-0.4.2 tzdata-2025.3 tzlocal-5.3.1 urllib3-2.6.3 uvicorn-0.40.0 vine-5.1.0 wcwidth-0.2.14
+2026-01-13T06:18:17.7933228Z Collecting pytest-split
+2026-01-13T06:18:17.8469981Z   Downloading pytest_split-0.10.0-py3-none-any.whl.metadata (9.5 kB)
+2026-01-13T06:18:17.8519531Z Requirement already satisfied: pytest-xdist in /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages (3.8.0)
+2026-01-13T06:18:17.8523322Z Requirement already satisfied: coverage in /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages (7.13.1)
+2026-01-13T06:18:17.8870026Z Collecting pytest<9,>=5 (from pytest-split)
+2026-01-13T06:18:17.8905763Z   Downloading pytest-8.4.2-py3-none-any.whl.metadata (7.7 kB)
+2026-01-13T06:18:17.8964398Z Requirement already satisfied: iniconfig>=1 in /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages (from pytest<9,>=5->pytest-split) (2.3.0)
+2026-01-13T06:18:17.8970721Z Requirement already satisfied: packaging>=20 in /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages (from pytest<9,>=5->pytest-split) (25.0)
+2026-01-13T06:18:17.8977176Z Requirement already satisfied: pluggy<2,>=1.5 in /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages (from pytest<9,>=5->pytest-split) (1.6.0)
+2026-01-13T06:18:17.8982670Z Requirement already satisfied: pygments>=2.7.2 in /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages (from pytest<9,>=5->pytest-split) (2.19.2)
+2026-01-13T06:18:17.9010626Z Requirement already satisfied: execnet>=2.1 in /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages (from pytest-xdist) (2.1.2)
+2026-01-13T06:18:17.9220155Z Downloading pytest_split-0.10.0-py3-none-any.whl (11 kB)
+2026-01-13T06:18:17.9275140Z Downloading pytest-8.4.2-py3-none-any.whl (365 kB)
+2026-01-13T06:18:18.0356625Z Installing collected packages: pytest, pytest-split
+2026-01-13T06:18:18.0362747Z   Attempting uninstall: pytest
+2026-01-13T06:18:18.0381716Z     Found existing installation: pytest 9.0.2
+2026-01-13T06:18:18.0454982Z     Uninstalling pytest-9.0.2:
+2026-01-13T06:18:18.2601081Z       Successfully uninstalled pytest-9.0.2
+2026-01-13T06:18:18.4795113Z 
+2026-01-13T06:18:18.4828928Z Successfully installed pytest-8.4.2 pytest-split-0.10.0
+2026-01-13T06:18:18.5347025Z ##[group]Run echo "PYTHONPATH=$PYTHONPATH"
+2026-01-13T06:18:18.5347395Z [36;1mecho "PYTHONPATH=$PYTHONPATH"[0m
+2026-01-13T06:18:18.5347652Z [36;1mpython -c "[0m
+2026-01-13T06:18:18.5347858Z [36;1mimport sys; [0m
+2026-01-13T06:18:18.5348079Z [36;1mprint('Python path OK'); [0m
+2026-01-13T06:18:18.5348370Z [36;1mfrom app.core.config import settings; [0m
+2026-01-13T06:18:18.5348658Z [36;1mprint('Settings import OK')[0m
+2026-01-13T06:18:18.5348892Z [36;1m"[0m
+2026-01-13T06:18:18.5382151Z shell: /usr/bin/bash -e {0}
+2026-01-13T06:18:18.5382388Z env:
+2026-01-13T06:18:18.5382782Z   MIN_COVERAGE: 70
+2026-01-13T06:18:18.5382987Z   PYTHONPATH: server
+2026-01-13T06:18:18.5383200Z   ENV_FILE: /dev/null
+2026-01-13T06:18:18.5383470Z   DATABASE_URL: sqlite+pysqlite:///:memory:
+2026-01-13T06:18:18.5383787Z   REDIS_URL: redis://localhost:6379/0
+2026-01-13T06:18:18.5384042Z   STUB_SLACK: 1
+2026-01-13T06:18:18.5384236Z   ALERT_REMINDER_MINUTES: 1
+2026-01-13T06:18:18.5384502Z   KEY: dev-apikey-123
+2026-01-13T06:18:18.5384718Z   API: http://localhost:8000
+2026-01-13T06:18:18.5385058Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:18.5385522Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.14/x64/lib/pkgconfig
+2026-01-13T06:18:18.5385963Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:18.5386357Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:18.5386742Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:18.5387140Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.14/x64/lib
+2026-01-13T06:18:18.5387467Z ##[endgroup]
+2026-01-13T06:18:18.5441222Z PYTHONPATH=server
+2026-01-13T06:18:18.7628814Z Python path OK
+2026-01-13T06:18:18.7629214Z Settings import OK
+2026-01-13T06:18:18.7906971Z ##[group]Run set -euo pipefail
+2026-01-13T06:18:18.7907527Z [36;1mset -euo pipefail[0m
+2026-01-13T06:18:18.7907886Z [36;1m[0m
+2026-01-13T06:18:18.7908330Z [36;1mecho "→ Running shard 4/4 with coverage file: $COVERAGE_FILE"[0m
+2026-01-13T06:18:18.7908878Z [36;1m[0m
+2026-01-13T06:18:18.7909183Z [36;1m# Tentative pytest-split d'abord[0m
+2026-01-13T06:18:18.7909759Z [36;1mif pytest -m "unit or contract" --splits 4 --group 4 -n auto \[0m
+2026-01-13T06:18:18.7910477Z [36;1m      --cov=server/app --cov-config=.coveragerc --cov-branch \[0m
+2026-01-13T06:18:18.7911190Z [36;1m      --cov-report=term-missing:skip-covered --cov-fail-under=0 \[0m
+2026-01-13T06:18:18.7911805Z [36;1m      --maxfail=3 --tb=short; then[0m
+2026-01-13T06:18:18.7912273Z [36;1m  echo "✅ pytest-split succeeded"[0m
+2026-01-13T06:18:18.7912893Z [36;1melse[0m
+2026-01-13T06:18:18.7913363Z [36;1m  echo "⚠️  pytest-split failed, trying file-based fallback..."[0m
+2026-01-13T06:18:18.7914230Z [36;1m  [0m
+2026-01-13T06:18:18.7914769Z [36;1m  mapfile -t TEST_FILES < <(find server/tests -name "*test*.py" -type f | sort)[0m
+2026-01-13T06:18:18.7915449Z [36;1m  TOTAL=${#TEST_FILES[@]}[0m
+2026-01-13T06:18:18.7915822Z [36;1m  [0m
+2026-01-13T06:18:18.7916122Z [36;1m  if [[ $TOTAL -eq 0 ]]; then [0m
+2026-01-13T06:18:18.7916555Z [36;1m    echo "❌ No test files found"[0m
+2026-01-13T06:18:18.7916968Z [36;1m    exit 1[0m
+2026-01-13T06:18:18.7917274Z [36;1m  fi[0m
+2026-01-13T06:18:18.7917541Z [36;1m  [0m
+2026-01-13T06:18:18.7917833Z [36;1m  SIZE=$(( (TOTAL + 3) / 4 ))[0m
+2026-01-13T06:18:18.7918233Z [36;1m  START=$(( (4 - 1) * SIZE ))[0m
+2026-01-13T06:18:18.7918692Z [36;1m  SLICE=( "${TEST_FILES[@]:$START:$SIZE}" )[0m
+2026-01-13T06:18:18.7919134Z [36;1m  [0m
+2026-01-13T06:18:18.7919441Z [36;1m  if [[ ${#SLICE[@]} -eq 0 ]]; then[0m
+2026-01-13T06:18:18.7919999Z [36;1m    echo "⚠️  No tests for shard 4, creating empty coverage"[0m
+2026-01-13T06:18:18.7920623Z [36;1m    echo "# Empty shard" > "$COVERAGE_FILE"[0m
+2026-01-13T06:18:18.7921074Z [36;1m  else[0m
+2026-01-13T06:18:18.7921426Z [36;1m    echo "Running ${#SLICE[@]} test files:"[0m
+2026-01-13T06:18:18.7921909Z [36;1m    printf '  %s\n' "${SLICE[@]}"[0m
+2026-01-13T06:18:18.7922309Z [36;1m    [0m
+2026-01-13T06:18:18.7922962Z [36;1m    pytest -n auto "${SLICE[@]}" -m "unit or contract" \[0m
+2026-01-13T06:18:18.7923655Z [36;1m      --cov=server/app --cov-config=.coveragerc --cov-branch \[0m
+2026-01-13T06:18:18.7924381Z [36;1m      --cov-report=term-missing:skip-covered --cov-fail-under=0 \[0m
+2026-01-13T06:18:18.7924970Z [36;1m      --maxfail=3 --tb=short[0m
+2026-01-13T06:18:18.7925335Z [36;1m  fi[0m
+2026-01-13T06:18:18.7925633Z [36;1mfi[0m
+2026-01-13T06:18:18.7925908Z [36;1m[0m
+2026-01-13T06:18:18.7926278Z [36;1m# Vérification et renommage si nécessaire[0m
+2026-01-13T06:18:18.7926853Z [36;1mif [[ -f .coverage && ! -f "$COVERAGE_FILE" ]]; then [0m
+2026-01-13T06:18:18.7927400Z [36;1m  mv .coverage "$COVERAGE_FILE"[0m
+2026-01-13T06:18:18.7927802Z [36;1mfi[0m
+2026-01-13T06:18:18.7928058Z [36;1m[0m
+2026-01-13T06:18:18.7928366Z [36;1mif [[ ! -f "$COVERAGE_FILE" ]]; then[0m
+2026-01-13T06:18:18.7928869Z [36;1m  echo "❌ Coverage file $COVERAGE_FILE not found"[0m
+2026-01-13T06:18:18.7929438Z [36;1m  ls -la coverage* .coverage* || true[0m
+2026-01-13T06:18:18.7929854Z [36;1m  exit 1[0m
+2026-01-13T06:18:18.7930139Z [36;1mfi[0m
+2026-01-13T06:18:18.7930392Z [36;1m[0m
+2026-01-13T06:18:18.7930803Z [36;1mecho "✅ Coverage file created: $(ls -lh "$COVERAGE_FILE")"[0m
+2026-01-13T06:18:18.7974525Z shell: /usr/bin/bash -e {0}
+2026-01-13T06:18:18.7974877Z env:
+2026-01-13T06:18:18.7975125Z   MIN_COVERAGE: 70
+2026-01-13T06:18:18.7975442Z   PYTHONPATH: server
+2026-01-13T06:18:18.7975734Z   ENV_FILE: /dev/null
+2026-01-13T06:18:18.7976064Z   DATABASE_URL: sqlite+pysqlite:///:memory:
+2026-01-13T06:18:18.7976527Z   REDIS_URL: redis://localhost:6379/0
+2026-01-13T06:18:18.7976932Z   STUB_SLACK: 1
+2026-01-13T06:18:18.7977489Z   ALERT_REMINDER_MINUTES: 1
+2026-01-13T06:18:18.7977842Z   KEY: dev-apikey-123
+2026-01-13T06:18:18.7978164Z   API: http://localhost:8000
+2026-01-13T06:18:18.7978633Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:18.7979251Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.14/x64/lib/pkgconfig
+2026-01-13T06:18:18.7979841Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:18.7980379Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:18.7980909Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:18.7981455Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.14/x64/lib
+2026-01-13T06:18:18.7981923Z   CELERY_TASK_ALWAYS_EAGER: 1
+2026-01-13T06:18:18.7982281Z   COVERAGE_FILE: coverage-unit-shard-4.data
+2026-01-13T06:18:18.7982876Z ##[endgroup]
+2026-01-13T06:18:18.8043388Z → Running shard 4/4 with coverage file: coverage-unit-shard-4.data
+2026-01-13T06:18:25.0968633Z 
+2026-01-13T06:18:25.0969921Z [pytest-split] No test durations found. Pytest-split will split tests evenly when no durations are found. 
+2026-01-13T06:18:25.0971164Z [pytest-split] You can expect better results in consequent runs, when test timings have been documented.
+2026-01-13T06:18:25.0971855Z 
+2026-01-13T06:18:25.0971993Z bringing up nodes...
+2026-01-13T06:18:25.0972333Z bringing up nodes...
+2026-01-13T06:18:25.0972727Z 
+2026-01-13T06:18:26.0423579Z EEEE
+2026-01-13T06:18:26.0424068Z ==================================== ERRORS ====================================
+2026-01-13T06:18:26.0424841Z __________ ERROR collecting server/tests/unit/test_endpoints_full.py ___________
+2026-01-13T06:18:26.0426114Z ImportError while importing test module '/home/runner/work/monitoring-arch/monitoring-arch/server/tests/unit/test_endpoints_full.py'.
+2026-01-13T06:18:26.0427288Z Hint: make sure your test modules/packages have valid Python names.
+2026-01-13T06:18:26.0427847Z Traceback:
+2026-01-13T06:18:26.0428502Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/importlib/__init__.py:126: in import_module
+2026-01-13T06:18:26.0429432Z     return _bootstrap._gcd_import(name[level:], package, level)
+2026-01-13T06:18:26.0430029Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0430590Z server/tests/unit/test_endpoints_full.py:15: in <module>
+2026-01-13T06:18:26.0431379Z     from app.infrastructure.persistence.database.models.metric import Metric
+2026-01-13T06:18:26.0432667Z E   ModuleNotFoundError: No module named 'app.infrastructure.persistence.database.models.metric'
+2026-01-13T06:18:26.0433723Z ________ ERROR collecting server/tests/unit/test_metrics_thresholds.py _________
+2026-01-13T06:18:26.0434949Z ImportError while importing test module '/home/runner/work/monitoring-arch/monitoring-arch/server/tests/unit/test_metrics_thresholds.py'.
+2026-01-13T06:18:26.0436114Z Hint: make sure your test modules/packages have valid Python names.
+2026-01-13T06:18:26.0436692Z Traceback:
+2026-01-13T06:18:26.0437334Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/importlib/__init__.py:126: in import_module
+2026-01-13T06:18:26.0438254Z     return _bootstrap._gcd_import(name[level:], package, level)
+2026-01-13T06:18:26.0438842Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0439456Z server/tests/unit/test_metrics_thresholds.py:29: in <module>
+2026-01-13T06:18:26.0440252Z     from app.infrastructure.persistence.database.models.metric import Metric
+2026-01-13T06:18:26.0441320Z E   ModuleNotFoundError: No module named 'app.infrastructure.persistence.database.models.metric'
+2026-01-13T06:18:26.0442322Z _______ ERROR at setup of test_condition_is_trimmed_and_case_insensitive _______
+2026-01-13T06:18:26.0443396Z [gw1] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:26.0444110Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:26.0444664Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:26.0445859Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:26.0446773Z     bind._run_ddl_visitor(
+2026-01-13T06:18:26.0447556Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:26.0448559Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:26.0449519Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:26.0450457Z     ).traverse_single(element)
+2026-01-13T06:18:26.0450811Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0451618Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:26.0452466Z     return meth(obj, **kw)
+2026-01-13T06:18:26.0453018Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0453709Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:26.0454755Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:26.0455618Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:26.0456488Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:26.0456855Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0457577Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:26.0458384Z     return self.elements[0].column.table
+2026-01-13T06:18:26.0458745Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0459475Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:26.0460326Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:26.0460752Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0461485Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:26.0462234Z     return self._resolve_column()
+2026-01-13T06:18:26.0462720Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0463441Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:26.0464239Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:26.0465423Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:26.0466750Z ______________ ERROR at setup of test_string_ops[ne-up-down-True] ______________
+2026-01-13T06:18:26.0467429Z [gw2] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:26.0468029Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:26.0468503Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:26.0469251Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:26.0469992Z     bind._run_ddl_visitor(
+2026-01-13T06:18:26.0470682Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:26.0471546Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:26.0472393Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:26.0473363Z     ).traverse_single(element)
+2026-01-13T06:18:26.0473661Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0474368Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:26.0475148Z     return meth(obj, **kw)
+2026-01-13T06:18:26.0475436Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0476273Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:26.0477074Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:26.0477923Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:26.0478751Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:26.0479111Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0479828Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:26.0480612Z     return self.elements[0].column.table
+2026-01-13T06:18:26.0480973Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0481685Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:26.0482913Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:26.0483574Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0484324Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:26.0485054Z     return self._resolve_column()
+2026-01-13T06:18:26.0485388Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0486094Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:26.0486895Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:26.0488102Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:26.0489467Z ___________ ERROR at setup of test_bool_threshold_none_returns_false ___________
+2026-01-13T06:18:26.0490165Z [gw0] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:26.0490785Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:26.0491245Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:26.0491998Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:26.0492869Z     bind._run_ddl_visitor(
+2026-01-13T06:18:26.0493577Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:26.0494432Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:26.0495267Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:26.0496011Z     ).traverse_single(element)
+2026-01-13T06:18:26.0496326Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0497015Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:26.0497789Z     return meth(obj, **kw)
+2026-01-13T06:18:26.0498083Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0498709Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:26.0499445Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:26.0500215Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:26.0501018Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:26.0501364Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0502046Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:26.0502936Z     return self.elements[0].column.table
+2026-01-13T06:18:26.0503293Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0503977Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:26.0504935Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:26.0505364Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0506061Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:26.0506748Z     return self._resolve_column()
+2026-01-13T06:18:26.0507072Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.0507735Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:26.0508490Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:26.1144682Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:26.1146903Z ____________ ERROR at setup of test_bool_eq_ne[eq-False-True-False] ____________
+2026-01-13T06:18:26.1148379Z [gw3] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:26.1149302Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:26.1149989Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:26.1150988Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:26.1152072Z     bind._run_ddl_visitor(
+2026-01-13T06:18:26.1153451Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:26.1154502Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:26.1155474Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:26.1156347Z     ).traverse_single(element)
+2026-01-13T06:18:26.1156676Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.1157437Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:26.1158252Z     return meth(obj, **kw)
+2026-01-13T06:18:26.1158557Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.1159263Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:26.1160085Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:26.1160958Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:26.1161836Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:26.1162196Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.1163173Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:26.1163982Z     return self.elements[0].column.table
+2026-01-13T06:18:26.1164357Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.1165119Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:26.1165973Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:26.1166415Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:26.1167123Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:26.1167851Z     return self._resolve_column()
+2026-01-13T06:18:26.1168186Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:26.1168866Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:26.1169652Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:26.1170791Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:26.1172273Z =============================== warnings summary ===============================
+2026-01-13T06:18:26.1173343Z ../../../../../opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/pydantic/_internal/_config.py:383
+2026-01-13T06:18:26.1174382Z ../../../../../opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/pydantic/_internal/_config.py:383
+2026-01-13T06:18:26.1175430Z ../../../../../opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/pydantic/_internal/_config.py:383
+2026-01-13T06:18:26.1176453Z ../../../../../opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/pydantic/_internal/_config.py:383
+2026-01-13T06:18:26.1177740Z   /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/pydantic/_internal/_config.py:383: UserWarning: Valid config keys have changed in V2:
+2026-01-13T06:18:26.1178857Z   * 'allow_population_by_field_name' has been renamed to 'validate_by_name'
+2026-01-13T06:18:26.1179392Z     warnings.warn(message, UserWarning)
+2026-01-13T06:18:26.1179998Z 
+2026-01-13T06:18:26.1180300Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2026-01-13T06:18:26.1180889Z ============================= slowest 20 durations =============================
+2026-01-13T06:18:26.1181731Z 0.03s setup    server/tests/unit/domain/test_match_condition.py::test_string_ops[ne-up-down-True]
+2026-01-13T06:18:26.1182898Z 0.03s setup    server/tests/unit/domain/test_match_condition.py::test_condition_is_trimmed_and_case_insensitive
+2026-01-13T06:18:26.1183901Z 0.03s setup    server/tests/unit/domain/test_match_condition.py::test_bool_threshold_none_returns_false
+2026-01-13T06:18:26.1184848Z 0.03s setup    server/tests/unit/domain/test_match_condition.py::test_bool_eq_ne[eq-False-True-False]
+2026-01-13T06:18:26.1185392Z 
+2026-01-13T06:18:26.1185628Z (4 durations < 0.005s hidden.  Use -vv to show these durations.)
+2026-01-13T06:18:26.1186166Z =========================== short test summary info ============================
+2026-01-13T06:18:26.1186938Z SKIPPED [1] server/tests/integration/_dbutils.py:49: Integration stack not running (export INTEG_STACK_UP=1)
+2026-01-13T06:18:26.1187698Z ERROR server/tests/unit/test_endpoints_full.py
+2026-01-13T06:18:26.1188157Z ERROR server/tests/unit/test_metrics_thresholds.py
+2026-01-13T06:18:26.1189908Z ERROR server/tests/unit/domain/test_match_condition.py::test_condition_is_trimmed_and_case_insensitive - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:26.1193022Z ERROR server/tests/unit/domain/test_match_condition.py::test_string_ops[ne-up-down-True] - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:26.1195882Z ERROR server/tests/unit/domain/test_match_condition.py::test_bool_threshold_none_returns_false - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:26.1198776Z ERROR server/tests/unit/domain/test_match_condition.py::test_bool_eq_ne[eq-False-True-False] - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:26.1200455Z !!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 6 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+2026-01-13T06:18:26.1201066Z !!!!!!!!!!!! xdist.dsession.Interrupted: stopping after 3 failures !!!!!!!!!!!!!
+2026-01-13T06:18:26.1201601Z 1 skipped, 4 warnings, 6 errors in 6.18s
+2026-01-13T06:18:26.1938903Z ⚠️  pytest-split failed, trying file-based fallback...
+2026-01-13T06:18:26.1974472Z Running 11 test files:
+2026-01-13T06:18:26.1974924Z   server/tests/unit/test_ingest_endpoint.py
+2026-01-13T06:18:26.1975834Z   server/tests/unit/test_match_conditions.py
+2026-01-13T06:18:26.1976336Z   server/tests/unit/test_metrics_404.py
+2026-01-13T06:18:26.1976699Z   server/tests/unit/test_metrics_endpoints_paths.py
+2026-01-13T06:18:26.1977053Z   server/tests/unit/test_metrics_thresholds.py
+2026-01-13T06:18:26.1977394Z   server/tests/unit/test_notification_service.py
+2026-01-13T06:18:26.1977728Z   server/tests/unit/test_notification_utils.py
+2026-01-13T06:18:26.1978055Z   server/tests/unit/test_notify_alert_cooldown.py
+2026-01-13T06:18:26.1978383Z   server/tests/unit/test_schemas_client.py
+2026-01-13T06:18:26.1978692Z   server/tests/unit/test_schemas_http_target.py
+2026-01-13T06:18:26.1979005Z   server/tests/unit/test_slack_provider.py
+2026-01-13T06:18:30.9032180Z bringing up nodes...
+2026-01-13T06:18:30.9032838Z bringing up nodes...
+2026-01-13T06:18:30.9033343Z 
+2026-01-13T06:18:32.5420424Z EEEEEEEE
+2026-01-13T06:18:32.5420937Z ==================================== ERRORS ====================================
+2026-01-13T06:18:32.5422254Z ________ ERROR collecting server/tests/unit/test_metrics_thresholds.py _________
+2026-01-13T06:18:32.5424064Z ImportError while importing test module '/home/runner/work/monitoring-arch/monitoring-arch/server/tests/unit/test_metrics_thresholds.py'.
+2026-01-13T06:18:32.5425074Z Hint: make sure your test modules/packages have valid Python names.
+2026-01-13T06:18:32.5425546Z Traceback:
+2026-01-13T06:18:32.5426065Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/importlib/__init__.py:126: in import_module
+2026-01-13T06:18:32.5426803Z     return _bootstrap._gcd_import(name[level:], package, level)
+2026-01-13T06:18:32.5427264Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5427730Z server/tests/unit/test_metrics_thresholds.py:29: in <module>
+2026-01-13T06:18:32.5428376Z     from app.infrastructure.persistence.database.models.metric import Metric
+2026-01-13T06:18:32.5429229Z E   ModuleNotFoundError: No module named 'app.infrastructure.persistence.database.models.metric'
+2026-01-13T06:18:32.5430032Z __________________ ERROR at setup of test_client_name[A-True] __________________
+2026-01-13T06:18:32.5431106Z [gw3] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:32.5431849Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:32.5432281Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:32.5433189Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:32.5433944Z     bind._run_ddl_visitor(
+2026-01-13T06:18:32.5434620Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:32.5435444Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:32.5436048Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:32.5436574Z     ).traverse_single(element)
+2026-01-13T06:18:32.5436798Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5437272Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:32.5437770Z     return meth(obj, **kw)
+2026-01-13T06:18:32.5437964Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5438377Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:32.5438876Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:32.5439408Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:32.5439951Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:32.5440185Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5440647Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:32.5441210Z     return self.elements[0].column.table
+2026-01-13T06:18:32.5441628Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5442136Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:32.5443005Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:32.5443305Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5443785Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:32.5444255Z     return self._resolve_column()
+2026-01-13T06:18:32.5444471Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5444926Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:32.5445438Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:32.5446222Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.5447238Z ______________ ERROR at setup of test_get_remind_minutes_override ______________
+2026-01-13T06:18:32.5447699Z [gw0] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:32.5448091Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:32.5448394Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:32.5448884Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:32.5449361Z     bind._run_ddl_visitor(
+2026-01-13T06:18:32.5449825Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:32.5450390Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:32.5450950Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:32.5451462Z     ).traverse_single(element)
+2026-01-13T06:18:32.5451672Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5452132Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:32.5452763Z     return meth(obj, **kw)
+2026-01-13T06:18:32.5452960Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5453375Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:32.5453876Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:32.5454408Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:32.5454953Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:32.5455189Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5455649Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:32.5456165Z     return self.elements[0].column.table
+2026-01-13T06:18:32.5456405Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5456881Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:32.5457426Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:32.5457722Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5458194Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:32.5458665Z     return self._resolve_column()
+2026-01-13T06:18:32.5458885Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5459340Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:32.5459857Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:32.5460756Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.5461616Z __________________ ERROR at setup of test_client_name[-False] __________________
+2026-01-13T06:18:32.5462069Z [gw1] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:32.5462472Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:32.5462885Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:32.5463373Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:32.5463863Z     bind._run_ddl_visitor(
+2026-01-13T06:18:32.5464329Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:32.5464888Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:32.5465576Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:32.5466077Z     ).traverse_single(element)
+2026-01-13T06:18:32.5466285Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5466742Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:32.5467234Z     return meth(obj, **kw)
+2026-01-13T06:18:32.5467425Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5467837Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:32.5468347Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:32.5468883Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:32.5469428Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:32.5469666Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5470137Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:32.5470646Z     return self.elements[0].column.table
+2026-01-13T06:18:32.5470881Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5471349Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:32.5471880Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:32.5472170Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5472741Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:32.5473221Z     return self._resolve_column()
+2026-01-13T06:18:32.5473437Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5473889Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:32.5474420Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:32.5475194Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.5476057Z ___________ ERROR at setup of test_client_email[root@localhost-True] ___________
+2026-01-13T06:18:32.5476518Z [gw2] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:32.5476913Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:32.5477223Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:32.5477706Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:32.5478193Z     bind._run_ddl_visitor(
+2026-01-13T06:18:32.5478655Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:32.5479333Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:32.5479889Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:32.5480387Z     ).traverse_single(element)
+2026-01-13T06:18:32.5480591Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5481041Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:32.5481543Z     return meth(obj, **kw)
+2026-01-13T06:18:32.5481738Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5482152Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:32.5482932Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:32.5483478Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:32.5484151Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:32.5484387Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5484846Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:32.5485351Z     return self.elements[0].column.table
+2026-01-13T06:18:32.5485584Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5486047Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:32.5486592Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:32.5486890Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5487368Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:32.5487840Z     return self._resolve_column()
+2026-01-13T06:18:32.5488060Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5488519Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:32.5489063Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:32.5490132Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.5491055Z ________________ ERROR at setup of test_client_name[acme-True] _________________
+2026-01-13T06:18:32.5491591Z [gw3] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:32.5492206Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:32.5493078Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:32.5493707Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:32.5494364Z     bind._run_ddl_visitor(
+2026-01-13T06:18:32.5494957Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:32.5495656Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:32.5496340Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:32.5496941Z     ).traverse_single(element)
+2026-01-13T06:18:32.5497206Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5497803Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:32.5498406Z     return meth(obj, **kw)
+2026-01-13T06:18:32.5498689Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5499257Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:32.5499819Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:32.5513579Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:32.5514260Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:32.5514522Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5515015Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:32.5515541Z     return self.elements[0].column.table
+2026-01-13T06:18:32.5515793Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5516271Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:32.5516838Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:32.5517124Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5517691Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:32.5518164Z     return self._resolve_column()
+2026-01-13T06:18:32.5518524Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5519025Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:32.5519549Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:32.5520322Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.5521173Z _______________ ERROR at setup of test_payload_severity_invalid ________________
+2026-01-13T06:18:32.5521629Z [gw0] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:32.5522027Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:32.5522328Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:32.5523101Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:32.5523601Z     bind._run_ddl_visitor(
+2026-01-13T06:18:32.5524107Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:32.5524669Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:32.5525221Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:32.5525718Z     ).traverse_single(element)
+2026-01-13T06:18:32.5525920Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5526369Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:32.5526856Z     return meth(obj, **kw)
+2026-01-13T06:18:32.5527053Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5527466Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:32.5527954Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:32.5528497Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:32.5529029Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:32.5529262Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5529721Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:32.5530215Z     return self.elements[0].column.table
+2026-01-13T06:18:32.5530448Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5530901Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:32.5531430Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:32.5531715Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5532171Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:32.5533114Z     return self._resolve_column()
+2026-01-13T06:18:32.5533362Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5533844Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:32.5534358Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:32.5535136Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.5535988Z _____________________ ERROR at setup of test_model_present _____________________
+2026-01-13T06:18:32.5536426Z [gw2] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:32.5536826Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:32.5537124Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:32.5537615Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:32.5538202Z     bind._run_ddl_visitor(
+2026-01-13T06:18:32.5538662Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:32.5539242Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:32.5539799Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:32.5540305Z     ).traverse_single(element)
+2026-01-13T06:18:32.5540504Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5540954Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:32.5541453Z     return meth(obj, **kw)
+2026-01-13T06:18:32.5541654Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5542077Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:32.5542808Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:32.5543357Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:32.5543889Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:32.5544119Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5544598Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:32.5545116Z     return self.elements[0].column.table
+2026-01-13T06:18:32.5545353Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5545809Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:32.5546358Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:32.5546648Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:32.5547116Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:32.5547594Z     return self._resolve_column()
+2026-01-13T06:18:32.5547806Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.6117040Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:32.6118164Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:32.6119364Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.6120685Z _________________ ERROR at setup of test_client_email[-False] __________________
+2026-01-13T06:18:32.6121358Z [gw1] linux -- Python 3.11.14 /opt/hostedtoolcache/Python/3.11.14/x64/bin/python
+2026-01-13T06:18:32.6121945Z server/tests/conftest.py:208: in _sqlite_engine_unit
+2026-01-13T06:18:32.6122393Z     db_base.Base.metadata.create_all(engine)
+2026-01-13T06:18:32.6123763Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:5928: in create_all
+2026-01-13T06:18:32.6124519Z     bind._run_ddl_visitor(
+2026-01-13T06:18:32.6125222Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:3260: in _run_ddl_visitor
+2026-01-13T06:18:32.6126078Z     conn._run_ddl_visitor(visitorcallable, element, **kwargs)
+2026-01-13T06:18:32.6126884Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2467: in _run_ddl_visitor
+2026-01-13T06:18:32.6127502Z     ).traverse_single(element)
+2026-01-13T06:18:32.6127744Z       ^^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.6128298Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/visitors.py:661: in traverse_single
+2026-01-13T06:18:32.6128905Z     return meth(obj, **kw)
+2026-01-13T06:18:32.6129132Z            ^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.6129652Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:962: in visit_metadata
+2026-01-13T06:18:32.6130402Z     collection = sort_tables_and_constraints(
+2026-01-13T06:18:32.6131055Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/ddl.py:1394: in sort_tables_and_constraints
+2026-01-13T06:18:32.6131729Z     dependent_on = fkc.referred_table
+2026-01-13T06:18:32.6132011Z                    ^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.6132712Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:4799: in referred_table
+2026-01-13T06:18:32.6133331Z     return self.elements[0].column.table
+2026-01-13T06:18:32.6133616Z            ^^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.6134174Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:1226: in __get__
+2026-01-13T06:18:32.6134826Z     obj.__dict__[self.__name__] = result = self.fget(obj)
+2026-01-13T06:18:32.6135175Z                                            ^^^^^^^^^^^^^^
+2026-01-13T06:18:32.6135741Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3199: in column
+2026-01-13T06:18:32.6136313Z     return self._resolve_column()
+2026-01-13T06:18:32.6136566Z            ^^^^^^^^^^^^^^^^^^^^^^
+2026-01-13T06:18:32.6137168Z /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/sqlalchemy/sql/schema.py:3222: in _resolve_column
+2026-01-13T06:18:32.6137707Z     raise exc.NoReferencedTableError(
+2026-01-13T06:18:32.6138483Z E   sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.6139296Z =============================== warnings summary ===============================
+2026-01-13T06:18:32.6139816Z ../../../../../opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/pydantic/_internal/_config.py:383
+2026-01-13T06:18:32.6140499Z ../../../../../opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/pydantic/_internal/_config.py:383
+2026-01-13T06:18:32.6141161Z ../../../../../opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/pydantic/_internal/_config.py:383
+2026-01-13T06:18:32.6141826Z ../../../../../opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/pydantic/_internal/_config.py:383
+2026-01-13T06:18:32.6142754Z   /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages/pydantic/_internal/_config.py:383: UserWarning: Valid config keys have changed in V2:
+2026-01-13T06:18:32.6143472Z   * 'allow_population_by_field_name' has been renamed to 'validate_by_name'
+2026-01-13T06:18:32.6143859Z     warnings.warn(message, UserWarning)
+2026-01-13T06:18:32.6144034Z 
+2026-01-13T06:18:32.6144246Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2026-01-13T06:18:32.6144663Z ============================= slowest 20 durations =============================
+2026-01-13T06:18:32.6145311Z 0.04s setup    server/tests/unit/test_notification_utils.py::test_get_remind_minutes_override
+2026-01-13T06:18:32.6145850Z 0.04s setup    server/tests/unit/test_schemas_client.py::test_client_name[-False]
+2026-01-13T06:18:32.6146335Z 0.04s setup    server/tests/unit/test_schemas_client.py::test_client_name[A-True]
+2026-01-13T06:18:32.6146863Z 0.04s setup    server/tests/unit/test_schemas_client.py::test_client_email[root@localhost-True]
+2026-01-13T06:18:32.6147214Z 
+2026-01-13T06:18:32.6147370Z (12 durations < 0.005s hidden.  Use -vv to show these durations.)
+2026-01-13T06:18:32.6147740Z =========================== short test summary info ============================
+2026-01-13T06:18:32.6148077Z ERROR server/tests/unit/test_metrics_thresholds.py
+2026-01-13T06:18:32.6149133Z ERROR server/tests/unit/test_schemas_client.py::test_client_name[A-True] - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.6151101Z ERROR server/tests/unit/test_notification_utils.py::test_get_remind_minutes_override - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.6153017Z ERROR server/tests/unit/test_schemas_client.py::test_client_name[-False] - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.6154872Z ERROR server/tests/unit/test_schemas_client.py::test_client_email[root@localhost-True] - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.6156694Z ERROR server/tests/unit/test_schemas_client.py::test_client_name[acme-True] - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.6158496Z ERROR server/tests/unit/test_notification_utils.py::test_payload_severity_invalid - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.6160264Z ERROR server/tests/unit/test_schemas_client.py::test_model_present - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.6162001Z ERROR server/tests/unit/test_schemas_client.py::test_client_email[-False] - sqlalchemy.exc.NoReferencedTableError: Foreign key associated with column 'samples.metric_instance_id' could not find table 'metrics' with which to generate a foreign key to target column 'id'
+2026-01-13T06:18:32.6163309Z !!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 9 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+2026-01-13T06:18:32.6163732Z !!!!!!!!!!!! xdist.dsession.Interrupted: stopping after 3 failures !!!!!!!!!!!!!
+2026-01-13T06:18:32.6164103Z 4 warnings, 9 errors in 5.74s
+2026-01-13T06:18:32.6796727Z ##[error]Process completed with exit code 2.
+2026-01-13T06:18:32.6858732Z ##[group]Run actions/upload-artifact@v4
+2026-01-13T06:18:32.6859006Z with:
+2026-01-13T06:18:32.6859187Z   name: unit-coverage-shard-4
+2026-01-13T06:18:32.6859421Z   path: coverage-unit-shard-4.data
+2026-01-13T06:18:32.6859654Z   retention-days: 1
+2026-01-13T06:18:32.6859838Z   if-no-files-found: error
+2026-01-13T06:18:32.6860048Z   compression-level: 6
+2026-01-13T06:18:32.6860233Z   overwrite: false
+2026-01-13T06:18:32.6860420Z   include-hidden-files: false
+2026-01-13T06:18:32.6860620Z env:
+2026-01-13T06:18:32.6860792Z   MIN_COVERAGE: 70
+2026-01-13T06:18:32.6860966Z   PYTHONPATH: server
+2026-01-13T06:18:32.6861155Z   ENV_FILE: /dev/null
+2026-01-13T06:18:32.6861370Z   DATABASE_URL: sqlite+pysqlite:///:memory:
+2026-01-13T06:18:32.6861668Z   REDIS_URL: redis://localhost:6379/0
+2026-01-13T06:18:32.6861914Z   STUB_SLACK: 1
+2026-01-13T06:18:32.6862090Z   ALERT_REMINDER_MINUTES: 1
+2026-01-13T06:18:32.6862299Z   KEY: dev-apikey-123
+2026-01-13T06:18:32.6862745Z   API: http://localhost:8000
+2026-01-13T06:18:32.6863041Z   pythonLocation: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:32.6863443Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.11.14/x64/lib/pkgconfig
+2026-01-13T06:18:32.6863828Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:32.6864173Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:32.6864515Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.11.14/x64
+2026-01-13T06:18:32.6864858Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.14/x64/lib
+2026-01-13T06:18:32.6865322Z ##[endgroup]
+2026-01-13T06:18:32.8988232Z ##[error]No files were found with the provided path: coverage-unit-shard-4.data. No artifacts will be uploaded.
+2026-01-13T06:18:32.9144161Z Post job cleanup.
+2026-01-13T06:18:33.0071263Z [command]/usr/bin/git version
+2026-01-13T06:18:33.0107987Z git version 2.52.0
+2026-01-13T06:18:33.0158609Z Temporarily overriding HOME='/home/runner/work/_temp/90a4949c-88a0-491e-bd0f-e7158c433c19' before making global git config changes
+2026-01-13T06:18:33.0159950Z Adding repository directory to the temporary git global config as a safe directory
+2026-01-13T06:18:33.0165034Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/monitoring-arch/monitoring-arch
+2026-01-13T06:18:33.0199607Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-01-13T06:18:33.0231707Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-01-13T06:18:33.0470695Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-01-13T06:18:33.0492796Z http.https://github.com/.extraheader
+2026-01-13T06:18:33.0505678Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-01-13T06:18:33.0537327Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-01-13T06:18:33.0767844Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-01-13T06:18:33.0799957Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-01-13T06:18:33.1117087Z Print service container logs: 0c982154601a445fbfceaca0e4e9c410_redis7alpine_b53fe7
+2026-01-13T06:18:33.1121637Z ##[command]/usr/bin/docker logs --details 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:18:33.1243633Z  1:C 13 Jan 2026 06:17:48.705 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+2026-01-13T06:18:33.1246476Z  1:C 13 Jan 2026 06:17:48.706 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+2026-01-13T06:18:33.1247335Z  1:C 13 Jan 2026 06:17:48.706 * Redis version=7.4.7, bits=64, commit=00000000, modified=0, pid=1, just started
+2026-01-13T06:18:33.1248682Z  1:C 13 Jan 2026 06:17:48.706 # Warning: no config file specified, using the default config. In order to specify a config file use redis-server /path/to/redis.conf
+2026-01-13T06:18:33.1249796Z  1:M 13 Jan 2026 06:17:48.706 * monotonic clock: POSIX clock_gettime
+2026-01-13T06:18:33.1250412Z  1:M 13 Jan 2026 06:17:48.706 * Running mode=standalone, port=6379.
+2026-01-13T06:18:33.1250952Z  1:M 13 Jan 2026 06:17:48.707 * Server initialized
+2026-01-13T06:18:33.1251466Z  1:M 13 Jan 2026 06:17:48.707 * Ready to accept connections tcp
+2026-01-13T06:18:33.1266169Z Stop and remove container: 0c982154601a445fbfceaca0e4e9c410_redis7alpine_b53fe7
+2026-01-13T06:18:33.1271120Z ##[command]/usr/bin/docker rm --force 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:18:33.4451458Z 463c009f7949d9e30456244c5b75329d3f2cd485ffd70f58079c3f90234ce487
+2026-01-13T06:18:33.4481734Z Remove container network: github_network_21873fc24a89462083192ada0c3e8ee1
+2026-01-13T06:18:33.4486354Z ##[command]/usr/bin/docker network rm github_network_21873fc24a89462083192ada0c3e8ee1
+2026-01-13T06:18:33.5637295Z github_network_21873fc24a89462083192ada0c3e8ee1
+2026-01-13T06:18:33.5699163Z Cleaning up orphan processes

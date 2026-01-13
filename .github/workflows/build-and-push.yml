@@ -17,40 +17,72 @@ env:
 
 jobs:
   # ===========================================================================
-  # Tests (prérequis avant build)
+  # Build et Push des images Docker
   # ===========================================================================
-  test:
+  build-and-push:
     runs-on: ubuntu-latest
+    # Ne builder que sur push vers main/production ou sur tags
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/production' || startsWith(github.ref, 'refs/tags/v'))
+    
+    strategy:
+      matrix:
+        include:
+          - image: monitoring-api
+            context: ./server
+            dockerfile: ./server/Dockerfile.prod
+          - image: monitoring-web
+            context: ./webapp
+            dockerfile: ./webapp/Dockerfile.prod
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
-          python-version: '3.11'
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Install dependencies
-        run: |
-          cd server
-          pip install -r requirements.txt
-          pip install pytest pytest-cov
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Run tests
-        run: |
-          cd server
-          pytest tests/ -v --cov=app --cov-report=term-missing
-        env:
-          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/test
-          REDIS_URL: redis://localhost:6379/0
-          JWT_SECRET: test-secret-32-chars-minimum
-          CELERY_TASK_ALWAYS_EAGER: "1"
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache,mode=max
+          platforms: linux/amd64
+
+      - name: Image digest
+        run: echo ${{ steps.build.outputs.digest }}
+
 
   # ===========================================================================
   # Build et Push des images Docker
   # ===========================================================================
   build-and-push:
-    needs: test
+    needs: []
     runs-on: ubuntu-latest
     # Ne builder que sur push vers main/production ou sur tags
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/production' || startsWith(github.ref, 'refs/tags/v'))
