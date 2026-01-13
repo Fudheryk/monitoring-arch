@@ -8,7 +8,7 @@
 x-app-common: &app-common
   image: ${DOCKER_USERNAME}/monitoring-api:${VERSION:-latest}
   env_file: ../.env.production
-  working_dir: /app/server
+  working_dir: /app/server/server
   restart: always
   networks:
     - monitoring-net
@@ -31,7 +31,7 @@ services:
   migrate:
     <<: *app-common
     container_name: monitoring-migrate
-    command: ["alembic", "upgrade", "head"]
+    command: ["alembic", "-c", "/app/server/server/alembic.ini", "upgrade", "head"]
     depends_on:
       db:
         condition: service_healthy
