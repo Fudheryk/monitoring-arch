@@ -91,9 +91,11 @@ jobs:
           sarif_file: 'trivy-results.sarif'
 
   notify:
-    needs: [build-and-push]
+    needs: [build-and-push, security-scan]
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && github.ref == 'refs/heads/main'
     steps:
-      - run: echo "build-and-push: ${{ needs.build-and-push.result }}"
-
+      - name: Send notification
+        run: |
+          echo "build-and-push: ${{ needs.build-and-push.result }}"
+          echo "security-scan: ${{ needs.security-scan.result }}"
