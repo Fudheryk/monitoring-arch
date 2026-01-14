@@ -24,7 +24,6 @@ FROM python:3.11-slim
 
 WORKDIR /app/server
 
-# VARIABLE GIT_COMMIT OBLIGATOIRE
 ARG GIT_COMMIT=dev
 RUN test -n "$GIT_COMMIT" || (echo "Error: GIT_COMMIT must be set in production" && exit 1)
 ENV GIT_COMMIT=$GIT_COMMIT
