@@ -3,6 +3,8 @@
 # =============================================================================
 FROM python:3.11-slim AS builder
 
+ARG GIT_COMMIT  # Optionnel pour ce stage
+
 WORKDIR /build
 
 # Installation des dépendances système minimales pour la compilation
@@ -22,6 +24,11 @@ FROM python:3.11-slim
 
 WORKDIR /app/server
 
+# VARIABLE GIT_COMMIT OBLIGATOIRE
+ARG GIT_COMMIT=dev
+RUN test -n "$GIT_COMMIT" || (echo "Error: GIT_COMMIT must be set in production" && exit 1)
+ENV GIT_COMMIT=$GIT_COMMIT
+
 # Installation des dépendances runtime uniquement
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
@@ -40,9 +47,6 @@ ENV PATH=/home/appuser/.local/bin:$PATH
 
 # Copie du code applicatif
 COPY --chown=appuser:appuser . .
-
-# Passage à l'utilisateur non-root
-USER appuser
 
 # Health check pour l'API (ignoré pour worker/beat)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

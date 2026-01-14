@@ -6,14 +6,15 @@
   <div class="page-container">
     <nav class="navbar">
       <div class="nav-left">
-        <button type="button" onclick="loadView('sites')"><span class="emoji">🌐</span> Sites</button>
-        <button type="button" onclick="loadView('machines')"><span class="emoji">🖥️</span> Serveurs</button>
-        <button type="button" onclick="loadView('events')"><span class="emoji">🧾</span> Evènements</button>
-        <button type="button" onclick="loadView('settings')"><span class="emoji">⚙️</span> Configuration</button>
+        <button type="button" data-load-view="sites"><span class="emoji">🌐</span> Sites</button>
+        <button type="button" data-load-view="machines"><span class="emoji">🖥️</span> Serveurs</button>
+        <button type="button" data-load-view="events"><span class="emoji">🧾</span> Evènements</button>
+        <button type="button" data-load-view="settings"><span class="emoji">⚙️</span> Paramètres</button>
       </div>
+      <button type="button" class="burger-btn" id="menu-toggle">☰</button>
       <div class="nav-right">
         <form method="post" action="{{ request.app.url_path_for('logout') }}">
-          <button type="submit" class="logout-btn">Se déconnecter</button>
+          <button type="submit" class="logout-btn"><span class="emoji">⏻</span> Déconnexion</button>
         </form>
       </div>
     </nav>

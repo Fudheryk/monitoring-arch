@@ -33,17 +33,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def get_version_cache_bust():
-    """Récupère le hash court du dernier commit Git ou fallback sur env/dev"""
-    try:
-        git_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], 
-                                          stderr=subprocess.DEVNULL).decode('utf-8').strip()
-        return git_hash
-    except:
-        return os.getenv("VERSION_CACHE_BUST", "dev-test")
-
-
-VERSION_CACHE_BUST = get_version_cache_bust()
+VERSION_CACHE_BUST = os.getenv("GIT_COMMIT", "dev")
 
 
 def _parse_iso(ts: str | None) -> datetime | None:

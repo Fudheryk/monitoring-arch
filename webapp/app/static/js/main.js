@@ -24,6 +24,10 @@
  * - sinon (navigation depuis navbar), on injecte dans #content comme avant.
  */
 function loadView(view, machineId = null) {
+
+  // Ferme le menu responsive s'il est ouvert
+  document.querySelector('.nav-left')?.classList.remove('open');
+ 
   // ------------------------------------------------------------
   // 0) Abort précédent fetch si on change vite
   // ------------------------------------------------------------
@@ -253,6 +257,10 @@ function loadView(view, machineId = null) {
 }
 
 
+function toggleMenu() {
+  document.querySelector('.nav-left').classList.toggle('open');
+}
+
 /**
  * TopBar : petite barre de progression en haut de page
  * - start() : affiche la barre et simule une progression jusqu’à ~90%
@@ -332,6 +340,25 @@ window.TopBar = (() => {
  * - On rafraîchit aussi les timestamps si la fonction existe
  */
 document.addEventListener("DOMContentLoaded", () => {
+
+  // 1. Bouton menu hamburger
+  const menuToggle = document.getElementById("menu-toggle");
+  if (menuToggle) {
+    menuToggle.addEventListener("click", toggleMenu);
+  }
+  
+  // 2. Gestion des clics sur les liens de navigation
+  // Remplacer les onclick="loadView('...')" supprimés
+  document.addEventListener("click", (e) => {
+    const link = e.target.closest("[data-load-view]");
+    if (link) {
+      e.preventDefault();
+      const view = link.dataset.loadView;
+      const machineId = link.dataset.machineId || null;
+      loadView(view, machineId);
+    }
+  });
+
   console.log("🏗️ DOM chargé, chargement vue sites");
   loadView("sites");
 
@@ -339,5 +366,6 @@ document.addEventListener("DOMContentLoaded", () => {
   if (typeof doRefresh === "function") doRefresh();
 });
 
-// Expose loadView globalement pour les onclick="loadView('...')"
+// Expose les fonctions globalement pour les onclick
 window.loadView = loadView;
+window.toggleMenu = toggleMenu;

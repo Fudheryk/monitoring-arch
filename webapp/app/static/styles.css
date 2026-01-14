@@ -514,14 +514,14 @@ input:focus {
 }
 
 .navbar button {
-  width: 140px;
-  min-width: 140px;   /* évite le shrink */
-  max-width: 140px;
+  width: 130px;
+  min-width: 130px;
+  max-width: 130px;
   display: inline-flex;
   justify-content: center;
   align-items: center;
   gap: .5rem;
-  padding: 0.6rem 1rem;  /* garde ton style */
+  padding: 10px 68px;
   white-space: nowrap;
 }
 
@@ -567,6 +567,36 @@ input:focus {
     opacity: 0;
     width: 0;
     height: 0;
+}
+
+/* Burger caché par défaut (desktop) */
+.navbar button.burger-btn {
+  display: none;
+  font-size: 1.1rem;
+}
+
+/* Mobile: cacher nav-left, montrer burger */
+@media (max-width: 850px) {
+  .navbar button.burger-btn  {
+    display: flex;
+  }
+  
+  .nav-left {
+    display: none; /* caché par défaut */
+    position: absolute;
+    top: 60px;
+    left: 0;
+    right: 0;
+    background: var(--glass);
+    backdrop-filter: blur(12px);
+    flex-direction: column;
+    padding: 1rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  }
+  
+  .nav-left.open {
+    display: flex; /* visible quand "open" */
+  }
 }
 
 /* ----------------------------
