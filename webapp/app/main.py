@@ -14,6 +14,8 @@ from pathlib import Path
 import httpx
 import os
 import asyncio
+import subprocess
+
 from datetime import datetime, timezone
 from fastapi import FastAPI, Request, Form, status, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -38,7 +40,7 @@ def get_version_cache_bust():
                                           stderr=subprocess.DEVNULL).decode('utf-8').strip()
         return git_hash
     except:
-        return os.getenv("VERSION_CACHE_BUST", "dev")
+        return os.getenv("VERSION_CACHE_BUST", "dev-test")
 
 
 VERSION_CACHE_BUST = get_version_cache_bust()
