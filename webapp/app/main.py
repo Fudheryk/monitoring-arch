@@ -342,7 +342,7 @@ async def home(request: Request):
             "user": user,
             "first_machine_id": first_machine_id,
             "title": "NeonMonitor",
-            "app_version": APP_VERSION,              # Version pure "1.0.0"
+            "app_version": BASE_SEMVER,              # Version pure "1.0.0"
         },
     )
 

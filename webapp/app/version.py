@@ -119,7 +119,7 @@ APP_VERSION = get_full_version()
 GIT_COMMIT = get_git_commit_hash()
 BUILD_TIMESTAMP = get_build_timestamp()
 BUILD_NUMBER = get_build_number()
-BASE_SEMVER = BASE_VERSION.split('+')[0]
+BASE_SEMVER = '.'.join(BASE_VERSION.split('+')[0].split('.')[:3])
 
 # Pour cache busting des assets statiques
 VERSION_CACHE_BUST = GIT_COMMIT if GIT_COMMIT != "unknown" else datetime.utcnow().strftime("%Y%m%d%H%M%S")
