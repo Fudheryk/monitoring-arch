@@ -1361,7 +1361,7 @@ footer {
   .ev-main .ev-error {
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;         /* 👉 2 lignes max (mets 3 si tu veux un peu plus) */
+    -webkit-line-clamp: 2;
     overflow: hidden;
   }
 }
@@ -1372,6 +1372,19 @@ footer {
     }
 }
 
+@media (max-width: 650px) {
+  /* Cache la colonne */
+  .events-table th:nth-child(4),
+  .events-table td:nth-child(4) {
+    display: none;
+  }
+  
+  /* Cache le filtre "Statut :" ET sa select */
+  .events-filter label[for="events-status-filter"],
+  #events-status-filter {
+    display: none;
+  }
+}
 
 
 /* Badge NO DATA */

@@ -85,6 +85,8 @@ jobs:
           cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/${{ matrix.image }}:buildcache,mode=max
           build-args: |
             GIT_COMMIT=${{ github.sha }}
+            BUILD_TIMESTAMP=${{ github.event.head_commit.timestamp || env.RUN_START_TIME }}
+            VERSION_PATCH=${{ github.run_number }}
 
       # Push du tag "latest" uniquement pour main/prod
       - name: Also tag & push :latest (main/production only)

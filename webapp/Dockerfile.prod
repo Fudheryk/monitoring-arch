@@ -18,9 +18,21 @@ RUN pip install --no-cache-dir --user -r requirements.txt
 FROM python:3.11-slim
 
 WORKDIR /app/webapp
+
+# ARGS
 ARG GIT_COMMIT=dev
-RUN test -n "$GIT_COMMIT" || (echo "Error: GIT_COMMIT must be set in production" && exit 1)
+ARG BUILD_TIMESTAMP=2024-01-01T00:00:00Z  # <-- valeur par défaut ici
+ARG VERSION_MAJOR=1
+ARG VERSION_MINOR=0
+ARG VERSION_PATCH=0
+
+# ENVIRONNEMENT VARIABLES
 ENV GIT_COMMIT=$GIT_COMMIT
+ENV BUILD_TIMESTAMP=$BUILD_TIMESTAMP
+ENV VERSION_MAJOR=$VERSION_MAJOR
+ENV VERSION_MINOR=$VERSION_MINOR
+ENV VERSION_PATCH=$VERSION_PATCH
+ENV ENVIRONMENT=production
 
 # Installation curl pour healthcheck
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -44,5 +56,5 @@ USER webapp
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:3000/_health || exit 1
 
-# Démarrage uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000"]
+# Démarrage uvicorn (sans reload en production)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000", "--workers", "4"]
