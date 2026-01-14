@@ -123,78 +123,6 @@ def _get_instance_with_machine_and_definition(
     return metric_instance, machine, definition
 
 
-async def _parse_default_threshold_payload(req: Request) -> CreateDefaultThresholdIn:
-    """
-    Parse le payload pour POST /{metric_instance_id}/thresholds/default.
-
-    - Supporte JSON (corps standard) et form-urlencoded (soumission de formulaire HTML).
-    - Normalise :
-        * alert_enabled      → bool
-        * value / threshold  → float (value_num)
-        * threshold_bool     → bool
-        * consecutive_breaches, cooldown_sec, min_duration_sec → int
-
-    Retourne un objet Pydantic `CreateDefaultThresholdIn` prêt à l'emploi.
-    """
-    data: Dict[str, Any] = {}
-
-    # 1) Tentative JSON
-    try:
-        js = await req.json()
-        if isinstance(js, dict):
-            data = js
-    except Exception:
-        data = {}
-
-    # 2) Fallback FORM
-    if not data:
-        try:
-            form = await req.form()
-            data = dict(form)
-        except Exception:
-            data = {}
-
-    # Helpers de conversion
-    def _as_bool(v: Any) -> bool:
-        return str(v).strip().lower() in {"1", "true", "on", "yes", "y", "t"}
-
-    def _as_float(v: Any):
-        try:
-            return float(v)
-        except Exception:
-            return None
-
-    def _as_int(v: Any):
-        try:
-            return int(v)
-        except Exception:
-            return None
-
-    # Normalisation bool
-    if "alert_enabled" in data:
-        data["alert_enabled"] = _as_bool(data["alert_enabled"])
-
-    # Normalisation float pour les valeurs numériques (value / threshold / value_num)
-    for key in ("value", "threshold", "value_num"):
-        if key in data and data.get(key) not in (None, ""):
-            data[key] = _as_float(data[key])
-
-    # Normalisation bool pour le threshold_bool / value_bool
-    if "threshold_bool" in data:
-        data["threshold_bool"] = _as_bool(data["threshold_bool"])
-    if "value_bool" in data:
-        data["value_bool"] = _as_bool(data["value_bool"])
-
-    # Normalisation int pour les champs de config
-    for key in ("consecutive_breaches", "cooldown_sec", "min_duration_sec"):
-        if key in data and data.get(key) not in (None, ""):
-            data[key] = _as_int(data[key])
-
-    # Laisse les strings (threshold_str / value_str) telles quelles.
-    # Pydantic va faire le mapping final (alias, types, etc.).
-    return CreateDefaultThresholdIn.model_validate(data)
-
-
 # ============================================================================
 # GET /api/v1/metrics  → simple ping / smoke test
 # ============================================================================
@@ -223,7 +151,7 @@ async def list_metrics_by_machine(
 ) -> list[dict]:
     """
     Liste les métriques (instances) d'une machine donnée (avec contrôle strict
-    d’appartenance client).
+    d'appartenance client).
 
     Réponse typique pour le web app :
 
@@ -286,111 +214,219 @@ async def list_metrics_by_machine(
 # POST /api/v1/metrics/{metric_instance_id}/thresholds/default
 # ============================================================================
 @router.post("/{metric_instance_id}/thresholds/default")
-async def _parse_default_threshold_payload(req: Request) -> CreateDefaultThresholdIn:
+async def upsert_default_threshold(
+    metric_instance_id: str,
+    req: Request,  # ✅ Temporairement pour debug
+    api_key=Depends(security.api_key_auth),
+    db: Session = Depends(get_db),
+) -> dict:
     """
-    Parse le payload pour POST /{metric_instance_id}/thresholds/default.
-
-    - Supporte JSON (corps standard) et form-urlencoded (soumission de formulaire HTML).
-    - Normalise :
-        * alert_enabled      → bool
-        * value / threshold  → float (value_num)
-        * threshold_bool     → bool
-        * consecutive_breaches, cooldown_sec, min_duration_sec → int
-
-    Retourne un objet Pydantic `CreateDefaultThresholdIn` prêt à l'emploi.
+    Crée ou met à jour le seuil "default" d'une metric_instance.
+    VERSION DEBUG : Logs pour comprendre pourquoi le body est null
     """
-    data: Dict[str, Any] = {}
-
-    # ✅ CORRECTION : Détecter le Content-Type pour choisir le bon parser
-    content_type = req.headers.get("content-type", "").lower()
-
-    # 1) Si Content-Type est JSON, parser en JSON directement
-    if "application/json" in content_type:
-        try:
-            js = await req.json()
-            if isinstance(js, dict):
-                data = js
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid JSON payload: {str(e)}"
-            )
+    # ✅ DEBUG : Voir ce que FastAPI reçoit
+    import logging
+    logger = logging.getLogger(__name__)
     
-    # 2) Sinon, essayer Form (urlencoded ou multipart)
-    else:
-        try:
-            form = await req.form()
-            data = dict(form)
-        except Exception:
-            # Fallback : essayer quand même JSON si form échoue
-            try:
-                js = await req.json()
-                if isinstance(js, dict):
-                    data = js
-            except Exception:
-                data = {}
-
-    # ✅ Si le payload est vide, erreur explicite
-    if not data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Empty payload"
-        )
-
-    # Helpers de conversion (uniquement pour les données FORM)
-    def _as_bool(v: Any) -> bool:
-        if isinstance(v, bool):
-            return v
-        return str(v).strip().lower() in {"1", "true", "on", "yes", "y", "t"}
-
-    def _as_float(v: Any):
-        if isinstance(v, (int, float)):
-            return float(v)
-        try:
-            return float(v)
-        except Exception:
-            return None
-
-    def _as_int(v: Any):
-        if isinstance(v, int):
-            return v
-        try:
-            return int(v)
-        except Exception:
-            return None
-
-    # ✅ CORRECTION : Normaliser SEULEMENT si les valeurs sont des strings (form data)
-    # Si c'est déjà du JSON, Pydantic gère la conversion automatiquement
+    logger.error(f"🔍 Content-Type: {req.headers.get('content-type')}")
+    logger.error(f"🔍 All Headers: {dict(req.headers)}")
     
-    # Normalisation bool (seulement si c'est une string)
-    if "alert_enabled" in data and isinstance(data["alert_enabled"], str):
-        data["alert_enabled"] = _as_bool(data["alert_enabled"])
-
-    # Normalisation float pour les valeurs numériques (seulement si string)
-    for key in ("value", "threshold", "value_num"):
-        if key in data and data.get(key) not in (None, ""):
-            if isinstance(data[key], str):
-                data[key] = _as_float(data[key])
-
-    # Normalisation bool pour threshold_bool (seulement si string)
-    for key in ("threshold_bool", "value_bool"):
-        if key in data and isinstance(data[key], str):
-            data[key] = _as_bool(data[key])
-
-    # Normalisation int pour les champs de config (seulement si string)
-    for key in ("consecutive_breaches", "cooldown_sec", "min_duration_sec"):
-        if key in data and data.get(key) not in (None, ""):
-            if isinstance(data[key], str):
-                data[key] = _as_int(data[key])
-
-    # ✅ Laisser Pydantic faire le mapping final (alias, validation)
+    # Lire le body brut
     try:
-        return CreateDefaultThresholdIn.model_validate(data)
+        body_bytes = await req.body()
+        logger.error(f"🔍 Body raw bytes: {body_bytes}")
+        logger.error(f"🔍 Body decoded: {body_bytes.decode('utf-8')}")
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Validation error: {str(e)}"
+        logger.error(f"❌ Error reading body: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read body: {str(e)}")
+    
+    # Parser avec Pydantic
+    try:
+        body_str = body_bytes.decode('utf-8')
+        import json
+        data = json.loads(body_str)
+        logger.error(f"🔍 Parsed JSON data: {data}")
+        
+        payload = CreateDefaultThresholdIn.model_validate(data)
+        logger.error(f"✅ Pydantic payload OK: comparison={payload.comparison}, value_num={payload.value_num}")
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ JSON decode error: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+    except Exception as e:
+        logger.error(f"❌ Pydantic validation error: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
+    
+    # ============================================================
+    # À partir d'ici, code normal avec payload validé
+    # ============================================================
+    
+    # Chargement instance + machine + définition, avec contrôle de client
+    metric_instance, machine, definition = _get_instance_with_machine_and_definition(
+        db=db,
+        metric_instance_id=metric_instance_id,
+        client_id=api_key.client_id,
+    )
+
+    # Toggle alerting global éventuel via le payload
+    if payload.alert_enabled is not None:
+        metric_instance.is_alerting_enabled = bool(payload.alert_enabled)
+
+    # Chercher seuil "default" existant pour cette instance
+    mid = metric_instance.id
+    thr: ThresholdNew | None = db.scalars(
+        select(ThresholdNew).where(
+            ThresholdNew.metric_instance_id == mid,
+            ThresholdNew.name == "default",
         )
+    ).first()
+
+    # Normalisation de type pour la logique de validation
+    val_num, val_bool, val_str = payload.value_num, payload.value_bool, payload.value_str
+    cmp_in = normalize_comparison(payload.comparison)
+
+    def _normalize_db_condition(v: Optional[str]) -> Optional[str]:
+        return normalize_comparison(v)
+
+    allowed = {
+        "number": {"gt", "ge", "lt", "le", "eq", "ne"},
+        "boolean": {"eq", "ne"},
+        "string": {"eq", "ne", "contains", "not_contains", "regex"},
+    }
+
+    # Détermination de la famille de type ("number" / "boolean" / "string")
+    if definition is not None:
+        raw_type = definition.type
+        mtype = _norm_metric_type(raw_type)
+    else:
+        if val_num is not None:
+            mtype = "number"
+        elif val_bool is not None:
+            mtype = "boolean"
+        else:
+            mtype = "string"
+
+    # Validation par type de métrique
+    if mtype == "number":
+        if val_num is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="threshold (float) required for numeric metric",
+            )
+        cond = cmp_in or (_normalize_db_condition(thr.condition) if thr else "gt")
+        if cond not in allowed["number"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"invalid comparison for numeric: {cond}",
+            )
+        next_value_num, next_value_bool, next_value_str = val_num, None, None
+
+    elif mtype == "boolean":
+        if val_bool is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="threshold_bool required for boolean metric",
+            )
+        cond = cmp_in or (_normalize_db_condition(thr.condition) if thr else "eq")
+        if cond not in allowed["boolean"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"invalid comparison for bool: {cond}",
+            )
+        next_value_num, next_value_bool, next_value_str = None, val_bool, None
+
+    else:  # string
+        if val_str is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="threshold_str required for string metric",
+            )
+        cond = cmp_in or (_normalize_db_condition(thr.condition) if thr else "eq")
+        if cond not in allowed["string"]:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"invalid comparison for string: {cond}",
+            )
+        next_value_num, next_value_bool, next_value_str = None, None, val_str
+
+    # Upsert du threshold
+    created = False
+    updated = False
+
+    if thr is None:
+        thr = ThresholdNew(
+            id=uuid.uuid4(),
+            metric_instance_id=metric_instance.id,
+            name="default",
+            condition=cond,
+            value_num=next_value_num,
+            value_bool=next_value_bool,
+            value_str=next_value_str,
+            severity=payload.severity or "warning",
+            is_active=True,
+            consecutive_breaches=payload.consecutive_breaches or 1,
+            cooldown_sec=payload.cooldown_sec or 0,
+            min_duration_sec=payload.min_duration_sec or 0,
+        )
+        db.add(thr)
+        created = True
+    else:
+        if cond != thr.condition:
+            thr.condition = cond
+            updated = True
+
+        if next_value_num is not None and next_value_num != thr.value_num:
+            thr.value_num, thr.value_bool, thr.value_str = next_value_num, None, None
+            updated = True
+        if next_value_bool is not None and next_value_bool != thr.value_bool:
+            thr.value_num, thr.value_bool, thr.value_str = None, next_value_bool, None
+            updated = True
+        if next_value_str is not None and next_value_str != thr.value_str:
+            thr.value_num, thr.value_bool, thr.value_str = None, None, next_value_str
+            updated = True
+
+        for field in ("severity", "consecutive_breaches", "cooldown_sec", "min_duration_sec"):
+            new_val = getattr(payload, field)
+            if new_val is not None and new_val != getattr(thr, field):
+                setattr(thr, field, new_val)
+                updated = True
+
+    db.commit()
+
+    payload_touched = any(
+        v is not None
+        for v in (
+            payload.value_num,
+            payload.value_bool,
+            payload.value_str,
+            payload.comparison,
+            payload.severity,
+            payload.consecutive_breaches,
+            payload.cooldown_sec,
+            payload.min_duration_sec,
+        )
+    )
+    updated_flag = created or updated or (payload.alert_enabled is not None) or payload_touched
+
+    metric_dict = _serialize_metric_instance(metric_instance, definition)
+
+    return {
+        "success": True,
+        "updated": updated_flag,
+        "metric": metric_dict,
+        "threshold": {
+            "id": str(thr.id),
+            "name": thr.name,
+            "condition": normalize_comparison(thr.condition),
+            "value_num": thr.value_num,
+            "value_bool": thr.value_bool,
+            "value_str": thr.value_str,
+            "severity": thr.severity,
+            "is_active": thr.is_active,
+            "consecutive_breaches": thr.consecutive_breaches,
+            "cooldown_sec": thr.cooldown_sec,
+            "min_duration_sec": thr.min_duration_sec,
+        },
+    }
 
 # ============================================================================
 # PATCH /api/v1/metrics/{metric_instance_id}/alerting

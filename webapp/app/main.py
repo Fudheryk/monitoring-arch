@@ -645,22 +645,25 @@ async def proxy_update_settings(request: Request):
 async def web_upsert_default_threshold(request: Request, metric_instance_id: str):
     """
     Proxy webapp → API
-    POST form-urlencoded vers:
-      /api/v1/metrics/{id}/thresholds/default
+    Transmet le body JSON tel quel vers l'API backend.
     """
-    form = await request.form()
-    data = dict(form)
-    logger.info("THRESHOLD web form=%s", dict(form))
-
+    # ✅ CORRECTION : Lire le body brut et le transmettre tel quel
+    body_bytes = await request.body()
+    content_type = request.headers.get("content-type", "application/json")
+    
+    logger.info("THRESHOLD proxy: Content-Type=%s, body=%s", content_type, body_bytes.decode('utf-8'))
 
     async with httpx.AsyncClient(base_url=API_BASE, timeout=10.0) as client:
         r = await client.post(
             f"/api/v1/metrics/{metric_instance_id}/thresholds/default",
-            data=data,  # form-url-encoded
-            headers={"X-API-Key": _get_dev_api_key()},
+            content=body_bytes,  # ✅ Transmet le body brut
+            headers={
+                "X-API-Key": _get_dev_api_key(),
+                "Content-Type": content_type,  # ✅ Transmet le Content-Type
+            },
         )
 
-    # Renvoie brut pour que ton autoSave() puisse lire success/metric/threshold
+    # Renvoie la réponse de l'API
     try:
         payload = r.json()
     except Exception:

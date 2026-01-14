@@ -149,9 +149,6 @@ function applyThresholdToCardUI(card, th) {
    4. Mise à jour de l'UI en cas de succès
 -----------------------------*/
 function autoSave(form) {
-  // ------------------------------------------------------------
-  // 1. Guards + contexte
-  // ------------------------------------------------------------
   const card = form?.closest?.(".metric-card, .service-card");
   if (!card) {
     console.warn("❌ Impossible de trouver la carte parent du formulaire.");
@@ -159,9 +156,14 @@ function autoSave(form) {
   }
 
   const endpoint = String(form.dataset.endpoint || "").toLowerCase();
-  
-  // ✅ Déclarer formData ICI, AVANT toute utilisation
   const formData = new FormData(form);
+  
+  // ✅ DEBUG : Voir tous les champs du formulaire
+  console.log("📋 Form endpoint:", endpoint);
+  console.log("📋 FormData entries:");
+  for (let [key, value] of formData.entries()) {
+    console.log(`  ${key} = ${value}`);
+  }
 
   // ------------------------------------------------------------
   // 2. Patch "thresholdExists" pour endpoint threshold
@@ -302,36 +304,33 @@ function autoSave(form) {
 
     fetchOpts.headers["Content-Type"] = "application/x-www-form-urlencoded;charset=UTF-8";
     fetchOpts.body = params.toString();
-    
+      
   } else if (endpoint === "threshold") {
-    // ✅ THRESHOLD : Construire un body JSON avec mapping correct
-    // L'API attend "threshold" (alias de value_num) ou value_bool/value_str
     const body = {};
-    
-    // Mapper comparison et severity
+
     if (formData.has("comparison")) {
       body.comparison = formData.get("comparison");
     }
     if (formData.has("severity")) {
       body.severity = formData.get("severity");
     }
-    
-    // Mapper la valeur selon le type de métrique
+
     if (formData.has("value_num")) {
-      // Numérique : mapper vers "threshold" (alias accepté par l'API)
       const val = formData.get("value_num");
       body.threshold = parseFloat(val.replace(",", "."));
     } else if (formData.has("value_bool")) {
-      // Booléen : envoyer value_bool directement
       body.value_bool = formData.get("value_bool") === "1";
     } else if (formData.has("value_str")) {
-      // String : envoyer value_str directement
       body.value_str = formData.get("value_str");
     }
-    
+
+    // ✅ DEBUG : Voir ce qui est vraiment envoyé
+    console.log("📤 Threshold body avant stringify:", body);
+    console.log("📤 Threshold body JSON:", JSON.stringify(body));
+
     fetchOpts.headers["Content-Type"] = "application/json";
     fetchOpts.body = JSON.stringify(body);
-    
+
   } else {
     // Autres endpoints : FormData classique (multipart)
     fetchOpts.body = formData;
