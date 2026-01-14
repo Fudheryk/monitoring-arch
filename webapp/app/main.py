@@ -342,9 +342,9 @@ async def home(request: Request):
             "user": user,
             "first_machine_id": first_machine_id,
             "title": "NeonMonitor",
+            "app_version": APP_VERSION,              # Version pure "1.0.0"
         },
     )
-
 
 @app.post("/logout", name="logout")
 async def logout(request: Request):
