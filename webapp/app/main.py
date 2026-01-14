@@ -35,7 +35,7 @@ from app.config import get_settings         # config centralisée (API_BASE_URL,
 # =============================================================================
 try:
     # Import relatif depuis le même package (app.version)
-    from .version import APP_VERSION, GIT_COMMIT, BUILD_TIMESTAMP, VERSION_CACHE_BUST
+    from .version import APP_VERSION, GIT_COMMIT, BUILD_TIMESTAMP, VERSION_CACHE_BUST, BASE_SEMVER
     logger = logging.getLogger(__name__)
     logger.info(f"✓ Version chargée : {APP_VERSION} (commit: {GIT_COMMIT})")
 except ImportError as e:
