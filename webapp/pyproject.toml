@@ -1,0 +1,46 @@
+[project]
+name = "neonmonitor-web"
+version = "1.0.0"
+description = "NeonMonitor Web Interface"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Frédéric GIL GARCIA", email = "frederic.gilgarcia@gmail.com" },
+]
+license = { text = "MIT" }
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: System Administrators",
+  "Programming Language :: Python :: 3.11",
+  "Framework :: FastAPI",
+  "Topic :: System :: Monitoring",
+]
+
+# Dépendances LÉGÈRES pour le frontend
+dependencies = [
+  "fastapi>=0.111,<0.112",
+  "uvicorn[standard]>=0.29,<0.31",
+  "pydantic>=2.7,<3.0",
+  "pydantic-settings>=2.2,<3.0",
+  "httpx>=0.27,<0.28",
+  "jinja2>=3.1,<4.0",
+  "python-dotenv>=1.0,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black>=23.0,<25.0",
+  "mypy>=1.0,<2.0",
+  "ruff>=0.5,<0.7",
+]
+
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# Indique que le code source Python se trouve sous le dossier "app/"
+[tool.setuptools]
+package-dir = { "" = "app" }
+
+[tool.setuptools.packages.find]
+where = ["app"]

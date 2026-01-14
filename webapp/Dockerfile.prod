@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+COPY pyproject.toml .
+RUN pip install --no-cache-dir --user .
 
 # =============================================================================
 # Stage 2: Runtime
@@ -21,18 +21,15 @@ WORKDIR /app/webapp
 
 # ARGS
 ARG GIT_COMMIT=dev
-ARG BUILD_TIMESTAMP=2024-01-01T00:00:00Z  # <-- valeur par défaut ici
-ARG VERSION_MAJOR=1
-ARG VERSION_MINOR=0
-ARG VERSION_PATCH=0
+ARG BUILD_TIMESTAMP=2024-01-01T00:00:00Z
+ARG BUILD_NUMBER=0
 
 # ENVIRONNEMENT VARIABLES
 ENV GIT_COMMIT=$GIT_COMMIT
 ENV BUILD_TIMESTAMP=$BUILD_TIMESTAMP
-ENV VERSION_MAJOR=$VERSION_MAJOR
-ENV VERSION_MINOR=$VERSION_MINOR
-ENV VERSION_PATCH=$VERSION_PATCH
+ENV BUILD_NUMBER=$BUILD_NUMBER
 ENV ENVIRONMENT=production
+ENV PYTHONPATH=/app/webapp
 
 # Installation curl pour healthcheck
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -1,51 +1,57 @@
 """
-webapp/app/version.py
-Gestion automatique de la version de l'application web.
+Gestion de la version enrichie avec metadata CI/CD.
 """
 import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Tuple
+
+# Version de base depuis importlib.metadata
+try:
+    import importlib.metadata
+    BASE_VERSION = importlib.metadata.version("neonmonitor-web")
+except importlib.metadata.PackageNotFoundError:
+    # Fallback pour dev sans package installé
+    BASE_VERSION = "0.0.0+dev.local"
 
 def get_git_commit_hash() -> str:
-    """Récupère le hash git court du commit actuel."""
+    """Récupère le hash git court."""
     try:
-        # Remonter à la racine du repo pour trouver .git
-        current_dir = Path(__file__).parent.parent.parent
+        # webapp/ est dans monitoring-arch/webapp/
+        repo_root = Path(__file__).parent.parent.parent.parent
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
             stderr=subprocess.DEVNULL,
-            cwd=str(current_dir),
+            cwd=str(repo_root),
         ).decode("utf-8").strip()
     except (subprocess.SubprocessError, FileNotFoundError):
-        return os.getenv("GIT_COMMIT", "dev")
+        return os.getenv("GIT_COMMIT", "unknown")
 
 def get_build_timestamp() -> str:
-    """Timestamp de build en ISO format UTC."""
-    build_time = os.getenv("BUILD_TIMESTAMP")
-    if build_time:
-        return build_time
-    return datetime.utcnow().isoformat() + "Z"
+    """Timestamp UTC ISO."""
+    return os.getenv("BUILD_TIMESTAMP", datetime.utcnow().isoformat() + "Z")
 
-def get_app_version() -> str:
+def get_build_number() -> str:
+    """Numéro de build CI."""
+    return os.getenv("BUILD_NUMBER", "0")
+
+def get_full_version() -> str:
     """
-    Version au format PEP 440 :
-    {major}.{minor}.{patch}+{commit}.{build_date}
-    Exemples valides :
-    - 1.2.3+a722137.20240114T103000Z  (recommandé, PEP 440 compatible)
-    - 1.2.3+a722137.2024-01-14T103000Z (presque bon, mais "-" sont OK)
+    Version complète PEP 440 : {base}+{commit}.{build_num}.{timestamp}
     """
-    # Version semver - peut être overridé par env vars
-    major = os.getenv("VERSION_MAJOR", "1")
-    minor = os.getenv("VERSION_MINOR", "0")
-    patch = os.getenv("VERSION_PATCH", "0")
+    commit = get_git_commit_hash()
+    build_num = get_build_number()
+    timestamp = get_build_timestamp()[:19].replace(":", "")
     
-    semver = f"{major}.{minor}.{patch}"
-    commit_hash = get_git_commit_hash()
-    
-    # Format PEP 440 compatible (sans ":" et avec Z)
-    build_date = get_build_timestamp()[:19].replace(":", "").replace("-", "")
-    # → "20240114T103000Z"
-    
-    return f"{semver}+{commit_hash}.{build_date}"
+    if commit != "unknown":
+        return f"{BASE_VERSION}+{commit}.{build_num}.{timestamp}"
+    return BASE_VERSION
+
+# Variables exportées
+APP_VERSION = get_full_version()
+GIT_COMMIT = get_git_commit_hash()
+BUILD_TIMESTAMP = get_build_timestamp()
+BUILD_NUMBER = get_build_number()
+BASE_SEMVER = BASE_VERSION.split('+')[0]
+VERSION_CACHE_BUST = GIT_COMMIT if GIT_COMMIT != "unknown" else "dev"
