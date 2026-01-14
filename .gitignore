@@ -109,3 +109,8 @@ run-logs.zip
 # Backups (prod / local)
 # =============================================================================
 backups/
+
+# Poetry backups
+*.bak
+*.backup
+*.setuptools

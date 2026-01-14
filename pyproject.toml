@@ -18,20 +18,20 @@ classifiers = [
 
 # Dépendances runtime (bornées pour plus de stabilité)
 dependencies = [
-  "fastapi>=0.111,<0.112",
-  "uvicorn[standard]>=0.29,<0.31",
-  "pydantic>=2.7,<3.0",
-  "pydantic-settings>=2.2,<3.0",
+  "fastapi (>=0.111,<0.112)",
+  "uvicorn[standard] (>=0.29,<0.31)",
+  "pydantic (>=2.7,<3.0)",
+  "pydantic-settings (>=2.2,<3.0)",
   "sqlalchemy>=2.0,<3.0",
   "psycopg[binary,pool]>=3.1,<4.0",
   "alembic>=1.12,<2.0",
-  "httpx>=0.27,<0.28",
+  "httpx (>=0.27,<0.28)",
   "celery>=5.3,<6.0",
   "redis>=5.0,<6.0",
-  "python-dotenv>=1.0,<2.0",
+  "python-dotenv (>=1.0,<2.0)",
   "email-validator",
   "requests>=2.31,<3.0",
-  "jinja2>=3.1,<4.0"
+  "jinja2 (>=3.1,<4.0)"
 ]
 
 [project.optional-dependencies]

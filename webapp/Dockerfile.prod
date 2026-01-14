@@ -1,30 +1,27 @@
-# =============================================================================
-# Stage 1: Builder
-# =============================================================================
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
+# Installer Poetry
+RUN pip install poetry==1.8.0
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir --user .
+# Copier les fichiers de dépendances
+COPY pyproject.toml poetry.lock* ./
 
-# =============================================================================
+# Installer les dépendances avec Poetry
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi --no-dev
+
 # Stage 2: Runtime
-# =============================================================================
 FROM python:3.11-slim
 
 WORKDIR /app/webapp
 
-# ARGS
+# ARGS et ENV (garder GIT_COMMIT)
 ARG GIT_COMMIT=dev
-ARG BUILD_TIMESTAMP=2024-01-01T00:00:00Z
-ARG BUILD_NUMBER=0
+ARG BUILD_TIMESTAMP
+ARG BUILD_NUMBER
 
-# ENVIRONNEMENT VARIABLES
 ENV GIT_COMMIT=$GIT_COMMIT
 ENV BUILD_TIMESTAMP=$BUILD_TIMESTAMP
 ENV BUILD_NUMBER=$BUILD_NUMBER
@@ -36,22 +33,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Copier les dépendances depuis le builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copier le code
+COPY --chown=webapp:webapp . .
+
 # Utilisateur non-root
 RUN useradd -m -u 1000 webapp && \
     chown -R webapp:webapp /app
-
-# Copie des dépendances
-COPY --from=builder --chown=webapp:webapp /root/.local /home/webapp/.local
-ENV PATH=/home/webapp/.local/bin:$PATH
-
-# Copie du code
-COPY --chown=webapp:webapp . .
-
 USER webapp
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:3000/_health || exit 1
 
-# Démarrage uvicorn (sans reload en production)
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000", "--workers", "4"]
