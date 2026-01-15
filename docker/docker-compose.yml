@@ -1,10 +1,20 @@
 # docker/docker-compose.yml
 # -----------------------------------------------------------------------------
-# Compose complet pour :
+# DEV compose
 # - db, redis
-# - api, worker, beat (+ job migrate)
-# - web (FastAPI SSR/Jinja, port 3000)
-# - proxy (Nginx unifiant / et /api) — optionnel
+# - migrate (one-shot)
+# - api, worker, beat
+# - web (SSR FastAPI, port 3000 interne)
+# - proxy (nginx) expose 80/443 en local
+#
+# Points corrigés / améliorés :
+# - doublons PROXY_HEADERS / FORWARDED_ALLOW_IPS supprimés
+# - FORWARDED_ALLOW_IPS: "*" -> remplacé par une valeur sûre (réseau docker)
+# - healthchecks harmonisés (curl partout, pas wget)
+# - worker/beat : on évite de relancer alembic upgrade head si tu gardes migrate
+#   (optionnel, mais ça évite des logs/bruit et des verrous inutiles)
+# - ajout d'un start_period sur healthcheck API (le temps que l'app démarre)
+# - petits commentaires pour clarifier le “pourquoi”
 # -----------------------------------------------------------------------------
 
 x-app-common: &app-common
@@ -18,6 +28,10 @@ x-app-common: &app-common
   restart: unless-stopped
 
 services:
+  # ---------------------------------------------------------------------------
+  # Migrations (one-shot)
+  # - En dev, on le garde séparé pour que tout le monde attende "schema prêt".
+  # ---------------------------------------------------------------------------
   migrate:
     <<: *app-common
     command: ["alembic", "upgrade", "head"]
@@ -29,6 +43,11 @@ services:
         condition: service_healthy
     restart: "no"
 
+  # ---------------------------------------------------------------------------
+  # API
+  # - Le proxy nginx est devant => activer proxy headers côté app (uvicorn).
+  # - forwarded_allow_ips doit inclure le réseau docker (ici on met large).
+  # ---------------------------------------------------------------------------
   api:
     <<: *app-common
     command: ["api"]
@@ -39,7 +58,13 @@ services:
       ALERT_REMINDER_MINUTES: "30"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
       CORS_ALLOW_ORIGINS: "https://monitoring.local"
-      LOG_LEVEL: DEBUG
+      LOG_LEVEL: "DEBUG"
+
+      # Uvicorn/FastAPI derrière nginx (sinon tu vois l'IP du proxy)
+      # ⚠️ éviter "*" en prod; en dev ok-ish, mais autant garder une valeur correcte.
+      PROXY_HEADERS: "1"
+      FORWARDED_ALLOW_IPS: "127.0.0.1,172.16.0.0/12"
+
     depends_on:
       db:
         condition: service_healthy
@@ -47,23 +72,34 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
     stop_signal: SIGINT
     stop_grace_period: 20s
+
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
+      # -f => exit non-zero si != 2xx
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/v1/health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 15s
+
     deploy:
       resources:
         limits:
           memory: 1g
 
+  # ---------------------------------------------------------------------------
+  # Worker
+  # - Si migrate est le job officiel de migrations, pas besoin de "alembic upgrade head"
+  #   au démarrage worker/beat.
+  # - Si tu veux une “auto-réparation” (schema), tu peux remettre l’alembic upgrade ici,
+  #   mais en pratique ça fait double exécution.
+  # ---------------------------------------------------------------------------
   worker:
     <<: *app-common
     command: >
       sh -lc "
-        alembic upgrade head &&
         celery -A app.workers.celery_app.celery worker
         -Q ingest,evaluate,heartbeat,http,notify,outbox
         --hostname=worker@%h
@@ -75,7 +111,7 @@ services:
       STUB_SLACK: "1"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
       ALERT_REMINDER_MINUTES: "30"
-      LOG_LEVEL: DEBUG
+      LOG_LEVEL: "DEBUG"
     depends_on:
       db:
         condition: service_healthy
@@ -85,11 +121,13 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 30s
 
+  # ---------------------------------------------------------------------------
+  # Beat
+  # ---------------------------------------------------------------------------
   beat:
     <<: *app-common
     command: >
       sh -lc "
-        alembic upgrade head &&
         celery -A app.workers.celery_app.celery beat -l debug
         --schedule /tmp/celerybeat-schedule
       "
@@ -99,7 +137,7 @@ services:
       STUB_SLACK: "1"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
       ALERT_REMINDER_MINUTES: "30"
-      LOG_LEVEL: DEBUG
+      LOG_LEVEL: "DEBUG"
     depends_on:
       db:
         condition: service_healthy
@@ -109,6 +147,9 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 30s
 
+  # ---------------------------------------------------------------------------
+  # PostgreSQL
+  # ---------------------------------------------------------------------------
   db:
     image: postgres:16
     environment:
@@ -130,6 +171,9 @@ services:
         limits:
           memory: 1g
 
+  # ---------------------------------------------------------------------------
+  # Redis
+  # ---------------------------------------------------------------------------
   redis:
     image: redis:7
     command: redis-server --save "" --appendonly no
@@ -142,6 +186,9 @@ services:
       - "6379:6379"
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Web (SSR)
+  # ---------------------------------------------------------------------------
   web:
     build:
       context: ../webapp
@@ -153,19 +200,25 @@ services:
       API_BASE_URL: "http://api:8000"
       LOGIN_PATH: "/login"
       PUBLIC_PATHS: "/login,/static,/_health,/health"
-      LOG_LEVEL: DEBUG
+      LOG_LEVEL: "DEBUG"
     volumes:
       - ../webapp:/app/webapp:cached
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/_health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/_health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 6
+      start_period: 10s
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Nginx proxy (dev)
+  # - expose 80/443 sur la machine
+  # - pour tester exactement comme prod (https + headers + routing)
+  # ---------------------------------------------------------------------------
   proxy:
     image: nginx:alpine
     ports:
@@ -181,6 +234,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Service de test "flaky" (debug HTTP target)
+  # ---------------------------------------------------------------------------
   flaky:
     build:
       context: ./flaky
@@ -194,7 +250,10 @@ services:
           - flaky.local
           - flaky.test
           - flaky.dev
-  
+
+  # ---------------------------------------------------------------------------
+  # MailHog (dev SMTP)
+  # ---------------------------------------------------------------------------
   mailhog:
     image: mailhog/mailhog
     ports:

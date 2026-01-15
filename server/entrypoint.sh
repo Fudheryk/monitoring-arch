@@ -93,15 +93,27 @@ PY
       ;;
   esac
 
+  # -------------------------------------------------------------------
+  # Uvicorn options for reverse proxy (nginx)
+  # - PROXY_HEADERS=1 -> add --proxy-headers
+  # - FORWARDED_ALLOW_IPS="127.0.0.1,172.30.0.0/16" (prod) or "*" (dev)
+  # -------------------------------------------------------------------
+  UVICORN_EXTRA_ARGS=()
+  if [[ "${PROXY_HEADERS:-0}" == "1" ]]; then
+    UVICORN_EXTRA_ARGS+=(--proxy-headers)
+    # Default: trust only localhost if not provided
+    UVICORN_EXTRA_ARGS+=(--forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-127.0.0.1}")
+  fi
+
   # Démarrage Uvicorn (inchangé)
   if [[ "${API_COVERAGE:-0}" == "1" ]] && _have_coverage; then
     log "API_COVERAGE=1 → running uvicorn under coverage"
     cd /app/server
-    _run_with_coverage "/app/server/.coverage.api" -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+    _run_with_coverage "/app/server/.coverage.api" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 "${UVICORN_EXTRA_ARGS[@]}"
   else
     [[ "${API_COVERAGE:-0}" == "1" ]] && log "coverage not found → starting uvicorn normally"
     log "Starting uvicorn…"
-    exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 "${UVICORN_EXTRA_ARGS[@]}"
   fi
 }
 

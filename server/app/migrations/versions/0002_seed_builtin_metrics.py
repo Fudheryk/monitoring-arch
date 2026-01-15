@@ -1,29 +1,33 @@
 from __future__ import annotations
 
 """
-0002_seed_dev_data
+0002_seed_builtin_metrics
 
-- Crée un client "Dev" + un user admin + une API key.
-- Ne crée PAS de machine pour le client Dev : la machine sera créée
-  et liée à la clé à la première ingestion via ensure_machine().
-- Crée un client "Acme Corp" avec une clé prod + une cible HTTP.
-- Ajoute aussi client_settings pour Dev.
-- Seed des métriques builtin dans metric_definitions à partir de BUILTIN_METRICS_SEED.
+---------------------------------
+Cette migration ne seed PLUS aucune donnée "Dev/Acme" (clients, users, api keys, http_targets,
+client_settings, etc.). Elle ne fait que seed le référentiel stable des métriques builtin
+dans metric_definitions.
+
+La donnée de démo doit être provisionnée via un script séparé (Option A),
+ex: server/scripts/seed_demo_data.py, exécuté uniquement en dev/staging.
+
+Pourquoi ?
+----------
+- Les migrations Alembic doivent idéalement rester liées au schéma + référentiels stables.
+- Éviter toute création de comptes/keys en prod via "alembic upgrade head".
 """
 
 from alembic import op
 from sqlalchemy import text
-from passlib.context import CryptContext
 import uuid
-import os
 
-revision = "0002_seed_dev_data"
+revision = "0002_seed_builtin_metrics"
 down_revision = "0001_initial_full"
 branch_labels = None
 depends_on = None
 
-# ──────────────────────────── Seed builtin metrics ─────────────────────────────
 
+# ──────────────────────────── Seed builtin metrics ─────────────────────────────
 BUILTIN_METRICS_SEED = [
     # --- FIREWALL -----------------------------------------------------------
     {
@@ -790,217 +794,17 @@ BUILTIN_METRICS_SEED = [
 
 
 def upgrade():
+    """
+    Seed des métriques builtin dans metric_definitions.
+
+    Idempotence:
+    - On insert chaque métrique uniquement si name n'existe pas déjà.
+    - On ne met PAS à jour une métrique existante (pour ne pas écraser des modifs prod).
+      Si tu veux gérer des mises à jour, fais-le via migrations dédiées (ALTER/UPDATE ciblés).
+    """
     conn = op.get_bind()
 
-    # ───────────────────────────────── Client "Dev" ─────────────────────────
-    SEED_CLIENT_NAME = os.getenv("SEED_CLIENT_NAME", "Dev")
-    SEED_API_KEY_1 = os.getenv("SEED_API_KEY_1", "dev-apikey-123")
-    SEED_API_KEY_2 = os.getenv("SEED_API_KEY_2", "dev-apikey-124")
-
-    # 1) Client Dev (idempotent sur name)
-    client_uuid = str(uuid.uuid4())
-    conn.execute(
-        text(
-            """
-        INSERT INTO clients (id, name)
-        SELECT CAST(:id AS UUID), CAST(:name AS VARCHAR(255))
-        WHERE NOT EXISTS (SELECT 1 FROM clients WHERE name = :name)
-        """
-        ),
-        {"id": client_uuid, "name": SEED_CLIENT_NAME},
-    )
-
-    # 2) Récupérer l'id du client Dev (quelle que soit l'insert précédente)
-    client_id = conn.execute(
-        text(
-            "SELECT id FROM clients WHERE name = CAST(:name AS VARCHAR(255)) LIMIT 1"
-        ),
-        {"name": SEED_CLIENT_NAME},
-    ).scalar()
-    client_id = str(client_id)
-
-    # 3) Utilisateur admin pour le client Dev (idempotent sur email)
-    pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    admin_email = "admin@example.com"
-    admin_pass = "admin"
-    user_id = str(uuid.uuid4())
-
-    conn.execute(
-        text(
-            """
-        INSERT INTO users (id, client_id, email, password_hash, role, is_active)
-        SELECT
-            CAST(:id AS UUID),
-            CAST(:client_id AS UUID),
-            CAST(:email AS VARCHAR(255)),
-            CAST(:ph AS TEXT),
-            CAST(:role AS VARCHAR(32)),
-            TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM users WHERE email = CAST(:email AS VARCHAR(255))
-        )
-        """
-        ),
-        {
-            "id": user_id,
-            "client_id": client_id,
-            "email": admin_email,
-            "ph": pwd.hash(admin_pass),
-            "role": "admin_client",
-        },
-    )
-
-    # 4.1) API Key Dev (première clé)
-    conn.execute(
-        text(
-            """
-        INSERT INTO api_keys (id, client_id, key, name, is_active)
-        SELECT 
-            CAST(:id AS UUID),
-            CAST(:client_id AS UUID),
-            CAST(:key AS VARCHAR(255)),
-            'dev',
-            TRUE
-        WHERE NOT EXISTS (SELECT 1 FROM api_keys WHERE key = :key)
-        """
-        ),
-        {
-            "id": str(uuid.uuid4()),
-            "client_id": client_id,
-            "key": SEED_API_KEY_1,
-        },
-    )
-
-    # 4.2) API Key Dev (seconde clé)
-    conn.execute(
-        text(
-            """
-        INSERT INTO api_keys (id, client_id, key, name, is_active)
-        SELECT 
-            CAST(:id AS UUID),
-            CAST(:client_id AS UUID),
-            CAST(:key AS VARCHAR(255)),
-            'dev',
-            TRUE
-        WHERE NOT EXISTS (SELECT 1 FROM api_keys WHERE key = :key)
-        """
-        ),
-        {
-            "id": str(uuid.uuid4()),
-            "client_id": client_id,
-            "key": SEED_API_KEY_2,
-        },
-    )
-
-    # 5) client_settings pour Dev
-    client_settings_id = str(uuid.uuid4())
-    conn.execute(
-        text(
-            """ 
-        INSERT INTO client_settings (
-            id, client_id, notification_email, slack_webhook_url, slack_channel_name, heartbeat_threshold_minutes,
-            consecutive_failures_threshold, alert_grouping_enabled, alert_grouping_window_seconds,
-            reminder_notification_seconds, grace_period_seconds, created_at, updated_at
-        ) 
-        SELECT 
-            CAST(:cs_id AS UUID),
-            CAST(:client_id AS UUID),
-            :notification_email,
-            :slack_webhook_url,
-            :slack_channel_name,
-            :heartbeat_threshold_minutes,
-            :consecutive_failures_threshold,
-            :alert_grouping_enabled,
-            :alert_grouping_window_seconds,
-            :reminder_notification_seconds,
-            :grace_period_seconds,
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP
-        WHERE NOT EXISTS (
-            SELECT 1 FROM client_settings WHERE client_id = CAST(:client_id AS UUID)
-        )
-        """
-        ),
-        {
-            "cs_id": client_settings_id,
-            "client_id": client_id,
-            "notification_email": "frederic.gilgarcia@gmail.com",
-            "slack_webhook_url": (os.getenv("SLACK_WEBHOOK_URL") or "").strip() or None,
-            "slack_channel_name": "#notif-webhook",
-            "heartbeat_threshold_minutes": 5,
-            "consecutive_failures_threshold": 2,
-            "alert_grouping_enabled": True,
-            "alert_grouping_window_seconds": 300,
-            "reminder_notification_seconds": 600,
-            "grace_period_seconds": 120,
-        },
-    )
-
-    # 6) Cible HTTP d’exemple pour Dev
-    conn.execute(
-        text(
-            """
-        INSERT INTO http_targets (
-            id, client_id, name, url, method,
-            timeout_seconds,
-            check_interval_seconds, is_active
-        )
-        SELECT
-            CAST(:id AS UUID),
-            CAST(:client_id AS UUID),
-            CAST(:name AS VARCHAR(255)),
-            CAST(:url AS VARCHAR(1000)),
-            'GET',
-            30,
-            300,
-            TRUE
-        WHERE NOT EXISTS (
-            SELECT 1 FROM http_targets
-            WHERE client_id = :client_id AND url = :url
-        )
-        """
-        ),
-        {
-            "id": str(uuid.uuid4()),
-            "client_id": client_id,
-            "name": "Example Target",
-            "url": "https://example.com",
-        },
-    )
-
-    # ───────────────────────────────── Client "Acme Corp" ─────────────────────
-    acme_client_id = str(uuid.uuid4())
-    conn.execute(
-        text(
-            """
-        INSERT INTO clients (id, name, email)
-        SELECT CAST(:id AS UUID), 'Acme Corp', 'it@acme.com'
-        WHERE NOT EXISTS (SELECT 1 FROM clients WHERE name = 'Acme Corp')
-        """
-        ),
-        {"id": acme_client_id},
-    )
-
-    # API Key pour Acme (clé prod de démo)
-    conn.execute(
-        text(
-            """
-        INSERT INTO api_keys (id, client_id, key, name, is_active)
-        SELECT 
-            CAST(:id AS UUID),
-            (SELECT id FROM clients WHERE name = 'Acme Corp' LIMIT 1),
-            'acme-prod-key-456',
-            'prod',
-            TRUE
-        WHERE NOT EXISTS (SELECT 1 FROM api_keys WHERE key = 'acme-prod-key-456')
-        """
-        ),
-        {"id": str(uuid.uuid4())},
-    )
-
-    # ───────────────────────────── Seed metric_definitions ────────────────────────
     for m in BUILTIN_METRICS_SEED:
-        # On enrichit le dict avec un id UUID string pour la colonne PK
         params = {
             "id": str(uuid.uuid4()),
             **m,
@@ -1043,87 +847,19 @@ def upgrade():
         )
 
 
-    # ⚠ IMPORTANT :
-    # On NE seed plus de machine / métriques / thresholds ici pour Dev.
-    # - La machine sera créée dynamiquement à la première ingestion de l’agent
-    #   via ensure_machine().
-    # - Les métriques seront créées via process_samples / SampleRepository.
-    # - Les thresholds peuvent être créés plus tard via l’UI ou un script dédié.
-
-
 def downgrade():
-    """Rollback des données seedées (idempotent)."""
+    """
+    Rollback des métriques builtin seedées.
+
+    Remarque:
+    - On supprime par name.
+    - C'est idempotent.
+    - On ne touche à aucune autre table.
+    """
     conn = op.get_bind()
 
-    # ───────── suppression des métriques builtin du catalogue ─────────
     for m in BUILTIN_METRICS_SEED:
         conn.execute(
             text("DELETE FROM metric_definitions WHERE name = :name"),
             {"name": m["name"]},
         )
-
-    # ───────── Client Acme ─────────
-    conn.execute(
-        text("DELETE FROM api_keys WHERE key = 'acme-prod-key-456'")
-    )
-    conn.execute(
-        text("DELETE FROM clients WHERE name = 'Acme Corp'")
-    )
-
-    # ───────── Client Dev ─────────
-    SEED_CLIENT_NAME = os.getenv("SEED_CLIENT_NAME", "Dev")
-    SEED_API_KEY_1 = os.getenv("SEED_API_KEY_1", "dev-apikey-123")
-    SEED_API_KEY_2 = os.getenv("SEED_API_KEY_2", "dev-apikey-124")
-
-    # Cible HTTP de démo
-    conn.execute(
-        text("DELETE FROM http_targets WHERE url = 'https://example.com'")
-    )
-
-    # client_settings
-    conn.execute(
-        text(
-            """
-        DELETE FROM client_settings
-        WHERE client_id IN (
-            SELECT id FROM clients WHERE name = :name
-        )
-        """
-        ),
-        {"name": SEED_CLIENT_NAME},
-    )
-
-    # API key Dev
-    conn.execute(
-        text("DELETE FROM api_keys WHERE key = :key1 OR key = :key2"),
-        {"key1": SEED_API_KEY_1, "key2": SEED_API_KEY_2},
-    )
-
-    # User admin
-    conn.execute(
-        text(   
-            """
-        DELETE FROM users
-        WHERE email = :email
-        """
-        ),
-        {"email": "admin@example.com"},
-    )
-
-    # Client Dev (uniquement s’il n’est plus référencé)
-    conn.execute(
-        text(
-            """
-        DELETE FROM clients
-        WHERE name = :name
-          AND NOT EXISTS (SELECT 1 FROM api_keys WHERE client_id = clients.id)
-          AND NOT EXISTS (SELECT 1 FROM http_targets WHERE client_id = clients.id)
-          AND NOT EXISTS (SELECT 1 FROM client_settings WHERE client_id = clients.id)
-          AND NOT EXISTS (SELECT 1 FROM users WHERE client_id = clients.id)
-        """
-        ),
-        {"name": SEED_CLIENT_NAME},
-    )
-
-    # On ne touche pas aux machines / metrics / thresholds dans ce downgrade :
-    # elles sont désormais créées dynamiquement (ingest + UI) et non plus seedées ici.
