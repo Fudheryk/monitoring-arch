@@ -115,3 +115,9 @@ backups/
 *.backup
 *.setuptools
 poetry.lock
+
+# Generated provisioning secrets (DO NOT COMMIT)
+server/scripts/provisioning/*.generated.secrets.env
+server/scripts/provisioning/*.secrets.env
+*.generated.secrets.env
+*.secrets.env
