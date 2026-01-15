@@ -107,7 +107,17 @@ services:
   beat:
     <<: *app-common
     container_name: monitoring-beat
-    command: ["celery", "-A", "app.workers.celery_app.celery", "beat", "-l", "info", "--schedule", "/tmp/celerybeat-schedule"]
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app.celery
+      - beat
+      - -l
+      - info
+      - --schedule
+      - /tmp/celerybeat-schedule
+      - --pidfile
+      - /tmp/celerybeat.pid
     depends_on:
       db:
         condition: service_healthy
@@ -117,7 +127,9 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'celery beat' || exit 1"]
+      test:
+        - CMD-SHELL
+        - 'test -s /tmp/celerybeat.pid && pid="$(cat /tmp/celerybeat.pid)" && test -d "/proc/$pid"'
       interval: 30s
       timeout: 5s
       retries: 3
@@ -128,6 +140,7 @@ services:
           memory: 150M
         reservations:
           memory: 80M
+
 
   # ---------------------------------------------------------------------------
   # PostgreSQL Database
