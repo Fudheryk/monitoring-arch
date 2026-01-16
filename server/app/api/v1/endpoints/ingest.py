@@ -1,45 +1,38 @@
 from __future__ import annotations
-
 """
 server/app/api/v1/endpoints/ingest.py
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-POST /ingest/metrics — point d'entrée d'ingestion des métriques.    
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+POST /ingest/metrics — point d'entrée d'ingestion des métriques.
+
+Rôle de ce contrôleur :
+- recevoir la requête HTTP,
+- authentifier via API key,
+- extraire X-Ingest-Id,
+- déléguer toute la logique métier au service `ingest_metrics`.
 """
 
-import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header
 
 from app.api.schemas.ingest import IngestRequest
 from app.application.services.ingestion_service import ingest_metrics
-from app.presentation.api.deps import api_key_auth_optional  # clé de voûte pour les tests
+from app.core.security import api_key_auth
 
-
-router = APIRouter(prefix="/ingest")
-logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/ingest", tags=["ingest"])
 
 
 @router.post("/metrics", status_code=202)
 async def post_metrics(
     payload: IngestRequest,
-    api_key=Depends(api_key_auth_optional),
+    # ✅ header-only : API key obligatoire
+    api_key=Depends(api_key_auth),
     x_ingest_id: Optional[str] = Header(default=None, alias="X-Ingest-Id"),
 ) -> dict:
     """
-    Endpoint HTTP pour l’ingestion des métriques.
+    Ingestion des métriques (header-only).
 
-    Le contrôleur se contente de :
-    - recevoir la requête HTTP,
-    - extraire la clé API (si présente) via la dépendance FastAPI,
-    - extraire l’identifiant d’ingestion (X-Ingest-Id),
-    - déléguer l’ensemble du traitement au service `ingest_metrics`.
-
-    Toute la logique métier (validation, fenêtre temporelle, idempotence,
-    persistance, envoi en file, etc.) vit dans le service applicatif.
+    - `X-API-Key` requis (401 si manquant, 403 si invalide/inactif).
+    - `X-Ingest-Id` optionnel (idempotence côté service).
     """
-    return ingest_metrics(
-        payload=payload,
-        api_key=api_key,
-        x_ingest_id=x_ingest_id,
-    )
+    return ingest_metrics(payload=payload, api_key=api_key, x_ingest_id=x_ingest_id)

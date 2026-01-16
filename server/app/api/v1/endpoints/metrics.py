@@ -2,44 +2,32 @@ from __future__ import annotations
 """
 server/app/api/v1/endpoints/metrics.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Endpoints Metrics (version refacto avec MetricInstance / ThresholdNew).
+Endpoints Metrics (MetricInstance / ThresholdNew) — JWT cookies (UI).
 
-Rôle principal pour le frontend :
-- lister les métriques d'une machine (instances) pour affichage,
-- créer / mettre à jour un seuil "default" pour une metric_instance,
-- activer / désactiver l'alerting d'une metric_instance,
-- mettre en pause / reprendre une metric_instance.
-
-Résumé des routes :
-- GET    /api/v1/metrics                          → smoke test / ping
-- GET    /api/v1/metrics/{machine_id}             → liste des métriques (instances) d'une machine
+Routes :
+- GET    /api/v1/metrics                          → ping JWT (debug/smoke)
+- GET    /api/v1/metrics/{machine_id}             → métriques d'une machine (tenant-scoped)
 - POST   /api/v1/metrics/{metric_instance_id}/thresholds/default
 - PATCH  /api/v1/metrics/{metric_instance_id}/alerting
 - PATCH  /api/v1/metrics/{metric_instance_id}/pause
 """
 
 import uuid
-from typing import Any, Dict, Tuple, Optional
+from typing import Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Body
-from fastapi import status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core import security
-from app.infrastructure.persistence.database.session import get_db
-from app.infrastructure.persistence.database.models.machine import Machine
-from app.infrastructure.persistence.database.models.metric_instance import MetricInstance
-from app.infrastructure.persistence.database.models.metric_definitions import MetricDefinitions
-from app.infrastructure.persistence.database.models.threshold_new import ThresholdNew
-
-from app.presentation.api.schemas.threshold import (
-    CreateDefaultThresholdIn,
-    ToggleAlertingIn,
-)
 from app.api.schemas.metric_pause import TogglePauseIn
 from app.domain.policies import _norm_metric_type, normalize_comparison
-
+from app.infrastructure.persistence.database.models.machine import Machine
+from app.infrastructure.persistence.database.models.metric_definitions import MetricDefinitions
+from app.infrastructure.persistence.database.models.metric_instance import MetricInstance
+from app.infrastructure.persistence.database.models.threshold_new import ThresholdNew
+from app.infrastructure.persistence.database.session import get_db
+from app.presentation.api.deps import get_current_user
+from app.presentation.api.schemas.threshold import CreateDefaultThresholdIn, ToggleAlertingIn
 
 router = APIRouter(prefix="/metrics")
 
@@ -53,22 +41,14 @@ def _serialize_metric_instance(
     definition: Optional[MetricDefinitions],
 ) -> dict:
     """
-    Construit la représentation "metric" renvoyée au frontend à partir :
-    - de l'instance (MetricInstance),
-    - de la définition globale (MetricDefinitions), si présente.
+    Construit la représentation "metric" renvoyée au frontend.
 
-    On essaie de rester compatible avec l'ancien contrat d'API :
-      - name              ← name_effective (nom réel côté agent)
-      - group_name        ← definition.group_name (fallback "misc")
-      - type              ← definition.type (fallback "string")
-      - vendor            ← definition.vendor (fallback "custom")
-      - is_suggested_critical ← definition.is_suggested_critical (fallback False)
-
-    Champs purement "instance" :
-      - baseline_value, last_value
-      - is_alerting_enabled, is_paused
-      - (optionnel) needs_threshold → ici False par défaut (flag legacy)
-      - dimension_value → nouveau champ, utile pour les métriques dynamiques
+    Champs exposés :
+    - name_effective → name (contrat UI)
+    - group_name/type/vendor (depuis le catalogue si possible)
+    - baseline_value/last_value (instance)
+    - is_alerting_enabled/is_paused (instance)
+    - is_suggested_critical (catalogue)
     """
     return {
         "id": str(mi.id),
@@ -77,7 +57,7 @@ def _serialize_metric_instance(
         "group_name": definition.group_name if definition else "misc",
         "baseline_value": mi.baseline_value,
         "last_value": mi.last_value,
-        "needs_threshold": False,  # flag legacy : on le garde pour compat UI
+        "needs_threshold": False,  # legacy UI
         "type": definition.type if definition else "string",
         "vendor": definition.vendor if definition else "custom",
         "is_alerting_enabled": bool(mi.is_alerting_enabled),
@@ -92,16 +72,15 @@ def _get_instance_with_machine_and_definition(
     client_id,
 ) -> Tuple[MetricInstance, Machine, Optional[MetricDefinitions]]:
     """
-    Helper commun pour :
-      - valider l'UUID de metric_instance_id,
-      - charger la MetricInstance,
-      - vérifier que la machine associée appartient bien au client,
-      - charger éventuellement la MetricDefinitions.
+    Charge:
+    - MetricInstance
+    - Machine associée (pour vérifier l'appartenance au tenant)
+    - MetricDefinitions si definition_id présent
 
-    Soulève HTTPException(404) si :
-      - metric_instance inexistante,
-      - machine inexistante,
-      - machine n'appartient pas au client.
+    404 si:
+    - UUID invalide
+    - instance absente
+    - machine absente / pas au client
     """
     try:
         mid = uuid.UUID(str(metric_instance_id))
@@ -123,20 +102,28 @@ def _get_instance_with_machine_and_definition(
     return metric_instance, machine, definition
 
 
+def _require_client_id(current_user) -> object:
+    """
+    Petit helper local: évite de dupliquer le même check partout.
+    """
+    client_id = getattr(current_user, "client_id", None)
+    if not client_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing_client_id")
+    return client_id
+
+
 # ============================================================================
-# GET /api/v1/metrics  → simple ping / smoke test
+# GET /api/v1/metrics  → ping / smoke test (JWT)
 # ============================================================================
 @router.get("")
 async def list_metrics_root(
-    api_key=Depends(security.api_key_auth),
-    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
     """
-    Smoke test minimal pour vérifier que le module est joignable.
-
-    Peut aussi servir plus tard à lister les métriques du client en global
-    (toutes machines confondues) si besoin produit.
+    Ping JWT : si on arrive ici, le cookie access est valide.
+    (Conserve l'usage "smoke test" sans API key.)
     """
+    _ = _require_client_id(current_user)
     return {"items": [], "total": 0}
 
 
@@ -146,61 +133,35 @@ async def list_metrics_root(
 @router.get("/{machine_id}")
 async def list_metrics_by_machine(
     machine_id: str,
-    api_key=Depends(security.api_key_auth),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> list[dict]:
     """
-    Liste les métriques (instances) d'une machine donnée (avec contrôle strict
-    d'appartenance client).
-
-    Réponse typique pour le web app :
-
-    [
-      {
-        "id": "...",
-        "name": "cpu.usage_percent",
-        "dimension_value": null ou "eth0" / "/",
-        "group_name": "system",
-        "baseline_value": "0.2",
-        "last_value": "0.8",
-        "needs_threshold": false,
-        "vendor": "builtin",
-        "type": "numeric",
-        "is_alerting_enabled": true,
-        "is_paused": false,
-        "is_suggested_critical": false,
-      },
-      ...
-    ]
+    Liste les MetricInstance d'une machine (tenant-scoped).
     """
-    # Validation/binding de l'UUID
+    client_id = _require_client_id(current_user)
+
     try:
         mid = uuid.UUID(str(machine_id))
     except Exception:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    # Vérification machine + ownership
     machine = db.get(Machine, mid)
-    if not machine or machine.client_id != api_key.client_id:
+    if not machine or machine.client_id != client_id:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    # Récupération des instances pour cette machine
     instances: list[MetricInstance] = db.scalars(
         select(MetricInstance)
         .where(MetricInstance.machine_id == mid)
         .order_by(MetricInstance.name_effective)
     ).all()
 
-    # Chargement des définitions associées (en un seul coup)
     def_ids = {mi.definition_id for mi in instances if mi.definition_id is not None}
     definitions_map: dict[uuid.UUID, MetricDefinitions] = {}
     if def_ids:
-        defs = db.scalars(
-            select(MetricDefinitions).where(MetricDefinitions.id.in_(def_ids))
-        ).all()
+        defs = db.scalars(select(MetricDefinitions).where(MetricDefinitions.id.in_(def_ids))).all()
         definitions_map = {d.id: d for d in defs}
 
-    # On renvoie une liste de dicts simples facilement consommables par le frontend
     return [
         _serialize_metric_instance(
             mi,
@@ -216,55 +177,24 @@ async def list_metrics_by_machine(
 @router.post("/{metric_instance_id}/thresholds/default")
 async def upsert_default_threshold(
     metric_instance_id: str,
-    req: Request,  # ✅ Temporairement pour debug
-    api_key=Depends(security.api_key_auth),
+    payload: CreateDefaultThresholdIn = Body(...),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
     """
     Crée ou met à jour le seuil "default" d'une metric_instance.
-    VERSION DEBUG : Logs pour comprendre pourquoi le body est null
+
+    IMPORTANT:
+    - Suppression de la version "DEBUG req:Request + logs body brut"
+      -> on revient à un Body(...) Pydantic standard.
+    - Le proxy webapp doit envoyer Content-Type: application/json.
     """
-    # ✅ DEBUG : Voir ce que FastAPI reçoit
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    logger.error(f"🔍 Content-Type: {req.headers.get('content-type')}")
-    logger.error(f"🔍 All Headers: {dict(req.headers)}")
-    
-    # Lire le body brut
-    try:
-        body_bytes = await req.body()
-        logger.error(f"🔍 Body raw bytes: {body_bytes}")
-        logger.error(f"🔍 Body decoded: {body_bytes.decode('utf-8')}")
-    except Exception as e:
-        logger.error(f"❌ Error reading body: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to read body: {str(e)}")
-    
-    # Parser avec Pydantic
-    try:
-        body_str = body_bytes.decode('utf-8')
-        import json
-        data = json.loads(body_str)
-        logger.error(f"🔍 Parsed JSON data: {data}")
-        
-        payload = CreateDefaultThresholdIn.model_validate(data)
-        logger.error(f"✅ Pydantic payload OK: comparison={payload.comparison}, value_num={payload.value_num}")
-    except json.JSONDecodeError as e:
-        logger.error(f"❌ JSON decode error: {e}")
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
-    except Exception as e:
-        logger.error(f"❌ Pydantic validation error: {e}")
-        raise HTTPException(status_code=422, detail=str(e))
-    
-    # ============================================================
-    # À partir d'ici, code normal avec payload validé
-    # ============================================================
-    
-    # Chargement instance + machine + définition, avec contrôle de client
-    metric_instance, machine, definition = _get_instance_with_machine_and_definition(
+    client_id = _require_client_id(current_user)
+
+    metric_instance, _machine, definition = _get_instance_with_machine_and_definition(
         db=db,
         metric_instance_id=metric_instance_id,
-        client_id=api_key.client_id,
+        client_id=client_id,
     )
 
     # Toggle alerting global éventuel via le payload
@@ -272,10 +202,9 @@ async def upsert_default_threshold(
         metric_instance.is_alerting_enabled = bool(payload.alert_enabled)
 
     # Chercher seuil "default" existant pour cette instance
-    mid = metric_instance.id
     thr: ThresholdNew | None = db.scalars(
         select(ThresholdNew).where(
-            ThresholdNew.metric_instance_id == mid,
+            ThresholdNew.metric_instance_id == metric_instance.id,
             ThresholdNew.name == "default",
         )
     ).first()
@@ -295,9 +224,9 @@ async def upsert_default_threshold(
 
     # Détermination de la famille de type ("number" / "boolean" / "string")
     if definition is not None:
-        raw_type = definition.type
-        mtype = _norm_metric_type(raw_type)
+        mtype = _norm_metric_type(definition.type)
     else:
+        # fallback: déduire du payload
         if val_num is not None:
             mtype = "number"
         elif val_bool is not None:
@@ -305,7 +234,7 @@ async def upsert_default_threshold(
         else:
             mtype = "string"
 
-    # Validation par type de métrique
+    # Validation + choix condition
     if mtype == "number":
         if val_num is None:
             raise HTTPException(
@@ -348,7 +277,6 @@ async def upsert_default_threshold(
             )
         next_value_num, next_value_bool, next_value_str = None, None, val_str
 
-    # Upsert du threshold
     created = False
     updated = False
 
@@ -428,6 +356,7 @@ async def upsert_default_threshold(
         },
     }
 
+
 # ============================================================================
 # PATCH /api/v1/metrics/{metric_instance_id}/alerting
 # ============================================================================
@@ -435,27 +364,24 @@ async def upsert_default_threshold(
 async def toggle_alerting(
     metric_instance_id: str,
     body: ToggleAlertingIn = Body(...),
-    api_key=Depends(security.api_key_auth),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
     """
-    Active / désactive le flag global d'alerting d'une metric_instance.
+    Active / désactive le flag global d'alerting d'une metric_instance (tenant-scoped).
     """
-    metric_instance, machine, definition = _get_instance_with_machine_and_definition(
+    client_id = _require_client_id(current_user)
+
+    metric_instance, _machine, definition = _get_instance_with_machine_and_definition(
         db=db,
         metric_instance_id=metric_instance_id,
-        client_id=api_key.client_id,
+        client_id=client_id,
     )
 
     metric_instance.is_alerting_enabled = bool(body.alert_enabled)
     db.commit()
 
-    metric_dict = _serialize_metric_instance(metric_instance, definition)
-
-    return {
-        "success": True,
-        "metric": metric_dict,
-    }
+    return {"success": True, "metric": _serialize_metric_instance(metric_instance, definition)}
 
 
 # ============================================================================
@@ -465,29 +391,25 @@ async def toggle_alerting(
 async def toggle_pause_metric(
     metric_instance_id: str,
     body: TogglePauseIn = Body(...),
-    api_key=Depends(security.api_key_auth),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> dict:
     """
-    Met en pause ou reprend une metric_instance.
+    Met en pause ou reprend une metric_instance (tenant-scoped).
 
-    Idée produit :
-    - is_paused = True  → on CONTINUE de stocker les samples, mais
-      evaluation_service ne doit plus déclencher d'incidents pour cette instance.
-    - is_paused = False → comportement normal.
+    Produit :
+    - is_paused = True  → on continue de stocker les samples, mais l'évaluation
+      ne doit plus déclencher d'incidents pour cette instance.
     """
-    metric_instance, machine, definition = _get_instance_with_machine_and_definition(
+    client_id = _require_client_id(current_user)
+
+    metric_instance, _machine, definition = _get_instance_with_machine_and_definition(
         db=db,
         metric_instance_id=metric_instance_id,
-        client_id=api_key.client_id,
+        client_id=client_id,
     )
 
     metric_instance.is_paused = bool(body.paused)
     db.commit()
 
-    metric_dict = _serialize_metric_instance(metric_instance, definition)
-
-    return {
-        "success": True,
-        "metric": metric_dict,
-    }
+    return {"success": True, "metric": _serialize_metric_instance(metric_instance, definition)}

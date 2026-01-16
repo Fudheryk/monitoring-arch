@@ -6,42 +6,31 @@ Endpoints Machines :
 - GET  /machines
 - GET  /machines/{machine_id}/detail
 - GET  /machines/{machine_id}/metrics/config
-
-Ajouts importants :
-- Ajout du champ "status" pour les machines : UP / DOWN (basé sur last_seen).
-- Ajout du champ "status" pour les métriques : OK / NO_DATA.
-- Route de configuration métriques par machine (metrics/config).
-
-Refacto :
-- Utilise maintenant MetricInstance (et non plus Metric) partout côté lecture.
-- Utilise ThresholdNew / ThresholdNewRepository pour les seuils.
 """
 
 import uuid
 from datetime import datetime, timezone, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
-from sqlalchemy.sql import false
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
-from app.core.security import api_key_auth
 from app.infrastructure.persistence.database.session import get_db
 
 # ——————————————————————————————————————————————
-# Nouveau modèle : MetricInstance (remplace Metric)
+# Modèles
 # ——————————————————————————————————————————————
 from app.infrastructure.persistence.database.models.machine import Machine
 from app.infrastructure.persistence.database.models.metric_instance import MetricInstance
 from app.infrastructure.persistence.database.models.sample import Sample
 from app.infrastructure.persistence.database.models.metric_definitions import MetricDefinitions
-from app.infrastructure.persistence.database.models.incident import Incident 
+from app.infrastructure.persistence.database.models.incident import Incident
 from app.infrastructure.persistence.database.models.alert import Alert
-
-# ——————————————————————————————————————————————
-# Nouveau modèle de seuil (remplace Threshold)
-# ——————————————————————————————————————————————
 from app.infrastructure.persistence.database.models.threshold_new import ThresholdNew
 
+# ——————————————————————————————————————————————
+# Schémas + serializers
+# ——————————————————————————————————————————————
 from app.api.schemas.machine_detail import (
     MachineDetailResponse,
     MachineOut,
@@ -65,14 +54,15 @@ from app.infrastructure.persistence.repositories.threshold_new_repository import
     ThresholdNewRepository,
 )
 
+# ✅ Auth JWT (cookies) pour les endpoints UI
 from app.presentation.api.deps import get_current_user
 from app.presentation.api.schemas.machine_metric import MachineMetricConfig
 
 router = APIRouter(prefix="/machines")
 
 # ------------------ Configuration ------------------
-NO_DATA_SECONDS = 120          # Métrique silencieuse → NO_DATA
-MACHINE_DOWN_MINUTES = 3       # Machine silencieuse → DOWN
+NO_DATA_SECONDS = 120  # Métrique silencieuse → NO_DATA
+MACHINE_DOWN_MINUTES = 3  # Machine silencieuse → DOWN
 
 
 def _humanize_age(age_sec: int) -> str:
@@ -96,23 +86,45 @@ def _humanize_age(age_sec: int) -> str:
     years = days // 365
     return f"{years} an" + ("s" if years >= 2 else "")
 
+
+def _require_client_id(current_user) -> uuid.UUID:
+    """
+    Extrait et valide le client_id depuis l'utilisateur courant.
+
+    Pourquoi:
+    - Centralise la règle multi-tenant (source unique)
+    - Évite les oublis/patches partiels
+
+    Comportement:
+    - 401 si l'utilisateur n'expose pas client_id (token malformé / bug auth)
+    """
+    client_id = getattr(current_user, "client_id", None)
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return client_id
+
+
 # =====================================================================
-# GET /machines — liste simple
+# GET /machines — liste simple (UI via JWT cookies)
 # =====================================================================
 @router.get("")
 async def list_machines(
-    api_key=Depends(api_key_auth),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> list[dict]:
     """
     Liste minimale des machines pour un client :
     - id, hostname, os_type, last_seen
     - status : "UP" ou "DOWN" selon last_seen.
+
+    ✅ Auth: JWT cookies (current_user)
+    ✅ Multi-tenant: filtrage par current_user.client_id
     """
+    client_id = _require_client_id(current_user)
 
     rows = db.scalars(
         select(Machine)
-        .where(Machine.client_id == api_key.client_id)
+        .where(Machine.client_id == client_id)
         .order_by(Machine.registered_at.asc().nullslast(), Machine.hostname.asc())
     ).all()
 
@@ -125,7 +137,7 @@ async def list_machines(
             func.count(Incident.id).label("open_count"),
         )
         .where(
-            Incident.client_id == api_key.client_id,
+            Incident.client_id == client_id,
             Incident.status == "OPEN",
             Incident.machine_id.isnot(None),
         )
@@ -147,20 +159,19 @@ async def list_machines(
             data["status"] = "UP"
 
         data["open_incidents_count"] = open_counts.get(m.id, 0)
-
         out.append(data)
 
     return out
 
 
 # =====================================================================
-# GET /machines/{machine_id}/detail
+# GET /machines/{machine_id}/detail (UI via JWT cookies)
 # =====================================================================
 @router.get("/{machine_id}/detail", response_model=MachineDetailResponse)
 async def get_machine_detail(
     machine_id: str,
-    api_key=Depends(api_key_auth),
     db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
 ) -> MachineDetailResponse:
     """
     Vue complète utilisée par le Dashboard :
@@ -172,7 +183,11 @@ async def get_machine_detail(
         * statut métrique : "OK" / "NO_DATA"
 
     NOTE: on ne renvoie volontairement PAS `type` ni `unit`.
+
+    ✅ Auth: JWT cookies (current_user)
+    ✅ Multi-tenant: machine.client_id doit matcher current_user.client_id
     """
+    client_id = _require_client_id(current_user)
 
     # 1) Parse UUID
     try:
@@ -180,22 +195,25 @@ async def get_machine_detail(
     except Exception:
         raise HTTPException(status_code=404, detail="Machine not found")
 
-    # 2) Multi-tenant via api_key.client_id
+    # 2) Multi-tenant via current_user.client_id
     machine: Machine | None = db.get(Machine, mid)
-    if not machine or machine.client_id != api_key.client_id:
+    if not machine or machine.client_id != client_id:
+        # Ne pas révéler l'existence cross-tenant → 404
         raise HTTPException(status_code=404, detail="Machine not found")
 
     # 3) Machine + status
     machine_dict = serialize_machine_detail(machine)
     now = datetime.now(timezone.utc)
+
     machine_dict["status"] = (
         "DOWN"
         if (not machine.last_seen or (now - machine.last_seen) > timedelta(minutes=MACHINE_DOWN_MINUTES))
         else "UP"
     )
+
     open_count = db.scalar(
         select(func.count(Incident.id)).where(
-            Incident.client_id == api_key.client_id,
+            Incident.client_id == client_id,
             Incident.machine_id == mid,
             Incident.status == "OPEN",
         )
@@ -203,7 +221,7 @@ async def get_machine_detail(
     machine_dict["open_incidents_count"] = int(open_count)
     machine_out = MachineOut(**machine_dict)
 
-    # 4) Metrics instances
+    # 4) Metrics instances (rattachées à la machine)
     metrics: list[MetricInstance] = db.scalars(
         select(MetricInstance)
         .where(MetricInstance.machine_id == mid)
@@ -213,11 +231,13 @@ async def get_machine_detail(
     metric_instance_ids = [m.id for m in metrics]
 
     # ------------------------------------------------------------
-    # ✅ Flags "breach" / "firing" par métrique (1 requête batch)
+    # ✅ Flags "firing" par métrique (1 requête batch)
     # ------------------------------------------------------------
     firing_metric_ids: set[uuid.UUID] = set()
 
     if metric_instance_ids:
+        # Defense-in-depth : machine déjà validée tenant, donc machine_id suffit.
+        # (Si votre modèle Alert possède aussi client_id, vous pouvez ajouter Alert.client_id == client_id.)
         firing_rows = db.execute(
             select(Alert.metric_instance_id)
             .where(
@@ -232,13 +252,10 @@ async def get_machine_detail(
         firing_metric_ids = {r[0] for r in firing_rows}
 
     # 4bis) Charger les définitions associées (batch)
-    # definitions_by_id = {definition_id: MetricDefinitions}
     definitions_by_id: dict[uuid.UUID, MetricDefinitions] = {}
     definition_ids = {m.definition_id for m in metrics if m.definition_id is not None}
     if definition_ids:
-        defs = db.scalars(
-            select(MetricDefinitions).where(MetricDefinitions.id.in_(definition_ids))
-        ).all()
+        defs = db.scalars(select(MetricDefinitions).where(MetricDefinitions.id.in_(definition_ids))).all()
         definitions_by_id = {d.id: d for d in defs}
 
     # 5) Derniers samples (1 par metric_instance) - en 1 requête (pas N+1)
@@ -276,18 +293,17 @@ async def get_machine_detail(
             str_value=r.str_value,
         )
 
-
     # 6) Seuils "default"
     default_thresholds: dict[uuid.UUID, ThresholdOut] = {}
     if metric_instance_ids:
-        rows = db.scalars(
+        trows = db.scalars(
             select(ThresholdNew)
             .where(
                 ThresholdNew.metric_instance_id.in_(metric_instance_ids),
                 ThresholdNew.name == "default",
             )
         ).all()
-        for t in rows:
+        for t in trows:
             default_thresholds[t.metric_instance_id] = ThresholdOut(
                 id=str(t.id),
                 name=t.name,
@@ -305,14 +321,16 @@ async def get_machine_detail(
     # 7) Construire la réponse métriques
     metrics_out: list[MetricDetailOut] = []
     for mt in metrics:
-        
         last = last_samples.get(mt.id)
-
         if not last:
+            # Choix produit : on n'affiche pas de métrique sans dernier point
+            # (sinon UX bruitée). Si besoin, renvoyer une entrée avec status=NO_DATA.
             continue
-        else:
-            ts = datetime.fromisoformat(last.ts.replace("Z", "+00:00"))
-            metric_status = "NO_DATA" if (now - ts) > timedelta(seconds=NO_DATA_SECONDS) else "OK"
+
+        # status métrique
+        # (last.ts est isoformat() sans "Z" dans notre code → fromisoformat OK)
+        ts = datetime.fromisoformat(last.ts.replace("Z", "+00:00"))
+        metric_status = "NO_DATA" if (now - ts) > timedelta(seconds=NO_DATA_SECONDS) else "OK"
 
         # Définition (si reliée)
         d = definitions_by_id.get(mt.definition_id) if mt.definition_id else None
@@ -321,8 +339,7 @@ async def get_machine_detail(
         default_condition = d.default_condition if d and d.default_condition else None
         group_name = d.group_name if d else "misc"
 
-
-        is_firing = (mt.id in firing_metric_ids)
+        is_firing = mt.id in firing_metric_ids
 
         metrics_out.append(
             MetricDetailOut(
@@ -364,15 +381,15 @@ async def get_machine_metric_config(
     - flags de config (is_alerting_enabled, is_paused, needs_threshold)
     - baseline / last_value
     - seuil primaire issu de ThresholdNew (si existe)
+
+    ✅ Auth: JWT cookies
+    ✅ Multi-tenant: machine.client_id doit matcher current_user.client_id
     """
+    client_id = _require_client_id(current_user)
 
     # 1) Vérification existence + multi-tenant
     machine: Machine | None = db.get(Machine, machine_id)
-    if (
-        not machine
-        or not hasattr(current_user, "client_id")
-        or machine.client_id != current_user.client_id
-    ):
+    if not machine or machine.client_id != client_id:
         raise HTTPException(status_code=404, detail="Machine not found")
 
     # 2) Repositories adaptés
@@ -399,10 +416,7 @@ async def get_machine_metric_config(
         group_name = getattr(m, "group_name", None) or (catalog.group_name if catalog else None)
         vendor = getattr(m, "vendor", None) or (catalog.vendor if catalog else "builtin")
         mtype = getattr(m, "type", None) or (catalog.type if catalog else "string")
-        description = (
-            getattr(m, "description", None)
-            or (catalog.description if catalog else None)
-        )
+        description = getattr(m, "description", None) or (catalog.description if catalog else None)
 
         is_suggested_critical = getattr(m, "is_suggested_critical", None)
         if is_suggested_critical is None and catalog is not None:
@@ -421,19 +435,14 @@ async def get_machine_metric_config(
                 vendor=vendor,
                 type=mtype,
                 description=description,
-
                 is_suggested_critical=is_suggested_critical,
                 default_condition=default_condition,
-
                 is_alerting_enabled=m.is_alerting_enabled,
                 is_paused=m.is_paused,
                 needs_threshold=m.needs_threshold,
                 baseline_value=m.baseline_value,
                 last_value=m.last_value,
-
-                threshold_value=(
-                    str(th.value_num) if th and th.value_num is not None else None
-                ),
+                threshold_value=(str(th.value_num) if th and th.value_num is not None else None),
                 threshold_condition=th.condition if th else None,
                 threshold_severity=th.severity if th else None,
             )
