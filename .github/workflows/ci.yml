@@ -7,7 +7,6 @@
 #   pas des fichiers "texte". On évite de créer des faux coverage vides.
 # - Artifacts : pattern download correct + merge-multiple pour simplifier
 # - Logs : diagnostics plus riches en cas de timeout
-# - Codecov : condition fiable (secret présent)
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CI
@@ -614,14 +613,6 @@ jobs:
           path: htmlcov-global/
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Upload to Codecov (if configured)
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        run: |
-          set -euo pipefail
-          curl -s https://codecov.io/bash | bash -s -- -f coverage-global.xml
 
   # ────────────────────────────────────────────────────────────────────────────
   # 5) GATE — job final (statut unique)
