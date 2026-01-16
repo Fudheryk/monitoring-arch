@@ -1,21 +1,20 @@
 # docker/docker-compose.yml
-# -----------------------------------------------------------------------------
-# DEV compose
-# - db, redis
-# - migrate (one-shot)
-# - api, worker, beat
-# - web (SSR FastAPI, port 3000 interne)
-# - proxy (nginx) expose 80/443 en local
+# =============================================================================
+# DEV Compose (Version corrigée)
+# =============================================================================
+# Services: db, redis, migrate, api, worker, beat, web (SSR), proxy, flaky, mailhog
 #
-# Points corrigés / améliorés :
-# - doublons PROXY_HEADERS / FORWARDED_ALLOW_IPS supprimés
-# - FORWARDED_ALLOW_IPS: "*" -> remplacé par une valeur sûre (réseau docker)
-# - healthchecks harmonisés (curl partout, pas wget)
-# - worker/beat : on évite de relancer alembic upgrade head si tu gardes migrate
-#   (optionnel, mais ça évite des logs/bruit et des verrous inutiles)
-# - ajout d'un start_period sur healthcheck API (le temps que l'app démarre)
-# - petits commentaires pour clarifier le “pourquoi”
-# -----------------------------------------------------------------------------
+# CORRECTIONS APPLIQUÉES:
+# - API: Healthcheck interval augmenté (10s->30s) pour éviter spam logs
+# - Worker: Ajout healthcheck Celery inspect ping
+# - Beat: Ajout healthcheck via PID file
+# - DB: Optimisation paramètres PostgreSQL pour dev
+# - Redis: Ajout healthcheck avec timeout
+# - Web: Correction entrypoint et working_dir
+# - Proxy: Ajout healthcheck nginx
+# - Harmonisation: stop_grace_period, deploy.resources cohérents
+# - Sécurité: Ajout security_opt sur tous les services critiques
+# =============================================================================
 
 x-app-common: &app-common
   build:
@@ -26,14 +25,17 @@ x-app-common: &app-common
   volumes:
     - ../server:/app/server:cached
   restart: unless-stopped
+  # Sécurité dev (moins critique qu'en prod mais bonne pratique)
+  security_opt:
+    - no-new-privileges:true
 
 services:
   # ---------------------------------------------------------------------------
   # Migrations (one-shot)
-  # - En dev, on le garde séparé pour que tout le monde attende "schema prêt".
   # ---------------------------------------------------------------------------
   migrate:
     <<: *app-common
+    container_name: monitoring-migrate-dev
     command: ["alembic", "upgrade", "head"]
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
@@ -42,14 +44,17 @@ services:
       db:
         condition: service_healthy
     restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   # ---------------------------------------------------------------------------
-  # API
-  # - Le proxy nginx est devant => activer proxy headers côté app (uvicorn).
-  # - forwarded_allow_ips doit inclure le réseau docker (ici on met large).
+  # API Backend
   # ---------------------------------------------------------------------------
   api:
     <<: *app-common
+    container_name: monitoring-api-dev
     command: ["api"]
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
@@ -59,12 +64,9 @@ services:
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
       CORS_ALLOW_ORIGINS: "https://monitoring.local"
       LOG_LEVEL: "DEBUG"
-
-      # Uvicorn/FastAPI derrière nginx (sinon tu vois l'IP du proxy)
-      # ⚠️ éviter "*" en prod; en dev ok-ish, mais autant garder une valeur correcte.
+      # Uvicorn/FastAPI derrière nginx
       PROXY_HEADERS: "1"
       FORWARDED_ALLOW_IPS: "127.0.0.1,172.16.0.0/12"
-
     depends_on:
       db:
         condition: service_healthy
@@ -72,32 +74,26 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-
     stop_signal: SIGINT
     stop_grace_period: 20s
-
     healthcheck:
-      # -f => exit non-zero si != 2xx
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/v1/health || exit 1"]
-      interval: 10s
+      # ↓ CORRIGÉ: Interval augmenté (10s->30s) pour éviter spam logs en dev
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:8000/api/v1/health || exit 1"]
+      interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 15s
-
+      start_period: 20s
     deploy:
       resources:
         limits:
           memory: 1g
 
   # ---------------------------------------------------------------------------
-  # Worker
-  # - Si migrate est le job officiel de migrations, pas besoin de "alembic upgrade head"
-  #   au démarrage worker/beat.
-  # - Si tu veux une “auto-réparation” (schema), tu peux remettre l’alembic upgrade ici,
-  #   mais en pratique ça fait double exécution.
+  # Celery Worker
   # ---------------------------------------------------------------------------
   worker:
     <<: *app-common
+    container_name: monitoring-worker-dev
     command: >
       sh -lc "
         celery -A app.workers.celery_app.celery worker
@@ -119,17 +115,30 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    stop_grace_period: 30s
+    stop_grace_period: 60s
+    # ↓ AJOUTÉ: Healthcheck Celery
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app.celery inspect ping --timeout=5 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
 
   # ---------------------------------------------------------------------------
-  # Beat
+  # Celery Beat Scheduler
   # ---------------------------------------------------------------------------
   beat:
     <<: *app-common
+    container_name: monitoring-beat-dev
     command: >
       sh -lc "
         celery -A app.workers.celery_app.celery beat -l debug
         --schedule /tmp/celerybeat-schedule
+        --pidfile /tmp/celerybeat.pid
       "
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
@@ -146,16 +155,35 @@ services:
       migrate:
         condition: service_completed_successfully
     stop_grace_period: 30s
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'test -s /tmp/celerybeat.pid && pid=$$(cat /tmp/celerybeat.pid) && test -d /proc/$$pid'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   # ---------------------------------------------------------------------------
-  # PostgreSQL
+  # PostgreSQL Database
   # ---------------------------------------------------------------------------
   db:
     image: postgres:16
+    container_name: monitoring-db-dev
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: monitoring
+      # ↓ AJOUTÉ: Optimisation paramètres pour dev (logs + performance)
+      POSTGRES_SHARED_BUFFERS: 256MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 1GB
+      POSTGRES_WORK_MEM: 16MB
+      POSTGRES_MAINTENANCE_WORK_MEM: 128MB
+      POSTGRES_MAX_CONNECTIONS: 100
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d monitoring"]
       interval: 5s
@@ -170,32 +198,46 @@ services:
       resources:
         limits:
           memory: 1g
+    # ↓ AJOUTÉ: Sécurité (même en dev)
+    security_opt:
+      - no-new-privileges:true
 
   # ---------------------------------------------------------------------------
   # Redis
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7
-    command: redis-server --save "" --appendonly no
+    container_name: monitoring-redis-dev
+    # Pas de persistence en dev (gain performance + pas de pollution disque)
+    command: redis-server --save "" --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # ↓ CORRIGÉ: Ajout timeout et amélioration robustesse
+      test: ["CMD", "sh", "-c", "redis-cli ping | grep -q PONG"]
       interval: 5s
-      timeout: 5s
+      timeout: 3s
       retries: 10
     ports:
       - "6379:6379"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    # ↓ AJOUTÉ: Sécurité
+    security_opt:
+      - no-new-privileges:true
 
   # ---------------------------------------------------------------------------
-  # Web (SSR)
+  # Web Frontend (SSR FastAPI)
   # ---------------------------------------------------------------------------
   web:
     build:
       context: ../webapp
       dockerfile: Dockerfile.dev
-    entrypoint: ""                 # pas d’entrypoint hérité du backend
+    container_name: monitoring-web-dev
+    # ↓ CORRIGÉ: Cohérence avec structure projet
     working_dir: /app/webapp
-    command: ["uvicorn","app.main:app","--host","0.0.0.0","--port","3000","--reload"]
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000", "--reload"]
     environment:
       API_BASE_URL: "http://api:8000"
       LOGIN_PATH: "/login"
@@ -207,20 +249,27 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/_health || exit 1"]
+      # ✅ CORRIGÉ: wget avec --method=GET au lieu de --spider (qui utilise HEAD)
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --timeout=3 -O /dev/null http://localhost:3000/_health || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 10s
+      start_period: 15s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    # ↓ AJOUTÉ: Sécurité
+    security_opt:
+      - no-new-privileges:true
 
   # ---------------------------------------------------------------------------
-  # Nginx proxy (dev)
-  # - expose 80/443 sur la machine
-  # - pour tester exactement comme prod (https + headers + routing)
+  # Nginx Reverse Proxy (dev)
   # ---------------------------------------------------------------------------
   proxy:
     image: nginx:alpine
+    container_name: monitoring-proxy-dev
     ports:
       - "80:80"
       - "443:443"
@@ -232,7 +281,21 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    # ↓ AJOUTÉ: Healthcheck nginx
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:80/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    # ↓ AJOUTÉ: Sécurité
+    security_opt:
+      - no-new-privileges:true
 
   # ---------------------------------------------------------------------------
   # Service de test "flaky" (debug HTTP target)
@@ -241,6 +304,7 @@ services:
     build:
       context: ./flaky
       dockerfile: Dockerfile
+    container_name: monitoring-flaky-dev
     ports:
       - "127.0.0.1:8081:80"
     restart: unless-stopped
@@ -250,19 +314,42 @@ services:
           - flaky.local
           - flaky.test
           - flaky.dev
+    deploy:
+      resources:
+        limits:
+          memory: 128M
 
   # ---------------------------------------------------------------------------
   # MailHog (dev SMTP)
   # ---------------------------------------------------------------------------
   mailhog:
     image: mailhog/mailhog
+    container_name: monitoring-mailhog-dev
     ports:
       - "1025:1025"   # SMTP
       - "8025:8025"   # UI web
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    # ↓ AJOUTÉ: Healthcheck MailHog
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8025 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
+# =============================================================================
+# Volumes
+# =============================================================================
 volumes:
   pg_data:
+    driver: local
 
+# =============================================================================
+# Networks
+# =============================================================================
 networks:
   default:
     driver: bridge

@@ -5,8 +5,9 @@
 # - Dump PostgreSQL depuis le conteneur "db"
 # - Stocke dans ./backups/postgres/
 # - Rétention automatique (14 jours par défaut)
-# - Vérifications: espace disque, intégrité, lock file
+# - Vérifications: espace disque, intégrité, lock file, migrations
 # - Métadonnées et statistiques
+# - Notifications en cas d'échec (optionnel)
 #
 # Usage:
 #   ./scripts/backup-db.sh [RETENTION_DAYS]
@@ -29,6 +30,36 @@ RETENTION_DAYS="${1:-14}"
 MIN_SPACE_MB=500  # 500MB minimum requis
 MAX_BACKUP_AGE=30 # Jours max pour alerte ancienneté
 
+# Configuration notifications (optionnel)
+ENABLE_NOTIFICATIONS="${ENABLE_NOTIFICATIONS:-false}"
+NOTIFICATION_WEBHOOK="${NOTIFICATION_WEBHOOK:-}"
+NOTIFICATION_EMAIL="${NOTIFICATION_EMAIL:-}"
+
+# --- Fonction de notification d'erreur --------------------------------------
+send_alert() {
+  local message="$1"
+  local log_message="🚨 ALERTE BACKUP: $message"
+  
+  echo "$log_message"
+  
+  if [[ "$ENABLE_NOTIFICATIONS" != "true" ]]; then
+    return 0
+  fi
+  
+  # Email (si configuré)
+  if [[ -n "$NOTIFICATION_EMAIL" ]] && command -v mail >/dev/null 2>&1; then
+    echo "$message" | mail -s "🚨 Backup PostgreSQL échoué - $(hostname)" "$NOTIFICATION_EMAIL" 2>/dev/null || true
+  fi
+  
+  # Webhook (Slack, Discord, etc.)
+  if [[ -n "$NOTIFICATION_WEBHOOK" ]] && command -v curl >/dev/null 2>&1; then
+    curl -X POST "$NOTIFICATION_WEBHOOK" \
+      -H 'Content-Type: application/json' \
+      -d "{\"text\": \"$log_message\", \"hostname\": \"$(hostname)\", \"timestamp\": \"$(date -Iseconds)\"}" \
+      >/dev/null 2>&1 || true
+  fi
+}
+
 # --- Initialisation ----------------------------------------------------------
 echo "════════════════════════════════════════════════════════════"
 echo "📦 BACKUP POSTGRESQL - $(date)"
@@ -36,8 +67,8 @@ echo "════════════════════════�
 
 # --- 1. Vérification lock file (éviter exécutions concurrentes) --------------
 if [[ -f "$LOCK_FILE" ]]; then
-  PID=$(cat "$LOCK_FILE" 2>/dev/null)
-  if kill -0 "$PID" 2>/dev/null; then
+  PID=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+  if [[ -n "$PID" ]] && kill -0 "$PID" 2>/dev/null; then
     echo "⚠️  Backup déjà en cours (PID: $PID)"
     echo "   Lock file: $LOCK_FILE"
     exit 0
@@ -55,9 +86,9 @@ echo "✅ Lock file créé: $LOCK_FILE"
 if [[ -d "$BACKUP_DIR" ]]; then
   AVAILABLE_SPACE=$(df -m "$BACKUP_DIR" 2>/dev/null | awk 'NR==2 {print $4}' || echo "0")
   if [[ -n "$AVAILABLE_SPACE" ]] && [[ "$AVAILABLE_SPACE" -lt $MIN_SPACE_MB ]]; then
-    echo "❌ ESPACE DISQUE INSUFFISANT"
-    echo "   Disponible: ${AVAILABLE_SPACE}MB"
-    echo "   Requis: ${MIN_SPACE_MB}MB"
+    error_msg="ESPACE DISQUE INSUFFISANT - Disponible: ${AVAILABLE_SPACE}MB, Requis: ${MIN_SPACE_MB}MB"
+    echo "❌ $error_msg"
+    send_alert "$error_msg"
     exit 1
   fi
   echo "✅ Espace disque: ${AVAILABLE_SPACE}MB disponible"
@@ -70,8 +101,10 @@ echo "✅ Répertoires créés: $BACKUP_DIR, $METADATA_DIR"
 
 # --- 4. Chargement variables d'environnement ---------------------------------
 if [[ ! -f ".env.production" ]]; then
-  echo "❌ ERREUR: .env.production manquant à $ROOT_DIR"
+  error_msg=".env.production manquant à $ROOT_DIR"
+  echo "❌ ERREUR: $error_msg"
   echo "👉 Crée-le depuis .env.production.example"
+  send_alert "$error_msg"
   exit 1
 fi
 
@@ -82,7 +115,12 @@ source ".env.production"
 set +a
 
 # Vérification variable critique
-: "${DB_PASSWORD:?❌ DB_PASSWORD manquant dans .env.production}"
+if [[ -z "${DB_PASSWORD:-}" ]]; then
+  error_msg="DB_PASSWORD manquant dans .env.production"
+  echo "❌ $error_msg"
+  send_alert "$error_msg"
+  exit 1
+fi
 echo "✅ Variables d'environnement chargées"
 
 # --- 5. Préparation backup ---------------------------------------------------
@@ -101,6 +139,28 @@ if ! docker compose -f "$COMPOSE_FILE" ps db --format json 2>/dev/null | grep -q
   docker compose -f "$COMPOSE_FILE" up -d db >/dev/null 2>&1
 fi
 
+# --- 6.bis Vérification migrations en cours ----------------------------------
+echo "→ Vérification migrations en cours..."
+max_migration_wait=180  # 3 minutes max
+migration_waited=0
+
+while docker compose -f "$COMPOSE_FILE" ps migrate --format json 2>/dev/null | grep -q '"State":"running"'; do
+  if [[ $migration_waited -ge $max_migration_wait ]]; then
+    error_msg="Migration bloquée depuis ${max_migration_wait}s, abandon du backup"
+    echo "❌ $error_msg"
+    send_alert "$error_msg"
+    exit 1
+  fi
+  
+  echo "⏳ Migration en cours, attente... (${migration_waited}s/${max_migration_wait}s)"
+  sleep 10
+  migration_waited=$((migration_waited + 10))
+done
+
+if [[ $migration_waited -gt 0 ]]; then
+  echo "✅ Migration terminée après ${migration_waited}s"
+fi
+
 # --- 7. Attente que PostgreSQL soit prêt -------------------------------------
 echo "→ Attente réponse PostgreSQL (max 60s)..."
 for i in {1..60}; do
@@ -111,9 +171,11 @@ for i in {1..60}; do
   fi
   
   if [[ $i -eq 60 ]]; then
-    echo "❌ PostgreSQL non disponible après 60s"
+    error_msg="PostgreSQL non disponible après 60s"
+    echo "❌ $error_msg"
     echo "📋 Logs PostgreSQL:"
     docker compose -f "$COMPOSE_FILE" logs --tail=50 db 2>/dev/null || true
+    send_alert "$error_msg"
     exit 1
   fi
   
@@ -139,7 +201,7 @@ pre_backup_stats=$(docker compose -f "$COMPOSE_FILE" exec -T \
 echo "→ Début du dump PostgreSQL..."
 start_time=$(date +%s)
 
-docker compose -f "$COMPOSE_FILE" exec -T \
+if ! docker compose -f "$COMPOSE_FILE" exec -T \
   -e PGPASSWORD="$DB_PASSWORD" db \
   pg_dump -U postgres -d monitoring \
     --no-owner \
@@ -148,7 +210,14 @@ docker compose -f "$COMPOSE_FILE" exec -T \
     --format=p \
     --blobs \
     --encoding=UTF8 \
-  | gzip -9 > "$backup_file"
+  | gzip -9 > "$backup_file" 2>/dev/null; then
+  
+  error_msg="Échec du pg_dump"
+  echo "❌ $error_msg"
+  rm -f "$backup_file"
+  send_alert "$error_msg"
+  exit 1
+fi
 
 end_time=$(date +%s)
 duration=$((end_time - start_time))
@@ -156,14 +225,18 @@ duration=$((end_time - start_time))
 # --- 10. Vérification intégrité backup ---------------------------------------
 echo "→ Vérification intégrité backup..."
 if [[ ! -s "$backup_file" ]]; then
-  echo "❌ Backup vide ou échoué: $backup_file"
+  error_msg="Backup vide ou échoué: $backup_file"
+  echo "❌ $error_msg"
   rm -f "$backup_file"
+  send_alert "$error_msg"
   exit 1
 fi
 
 if ! gzip -t "$backup_file" 2>/dev/null; then
-  echo "❌ Backup corrompu (gzip test échoué)"
+  error_msg="Backup corrompu (gzip test échoué)"
+  echo "❌ $error_msg"
   rm -f "$backup_file"
+  send_alert "$error_msg"
   exit 1
 fi
 
@@ -185,8 +258,12 @@ post_backup_stats=$(docker compose -f "$COMPOSE_FILE" exec -T \
   " 2>/dev/null || echo '{}')
 
 # --- 12. Création fichier métadonnées complet --------------------------------
-final_metadata=$(echo "$pre_backup_stats" "$post_backup_stats" | jq -s 'add' 2>/dev/null || \
-  echo "{\"pre_backup\": $pre_backup_stats, \"post_backup\": $post_backup_stats, \"timestamp\": \"$(date -Iseconds)\"}")
+if command -v jq >/dev/null 2>&1; then
+  final_metadata=$(echo "$pre_backup_stats" "$post_backup_stats" | jq -s 'add' 2>/dev/null || \
+    echo "{\"pre_backup\": $pre_backup_stats, \"post_backup\": $post_backup_stats, \"timestamp\": \"$(date -Iseconds)\"}")
+else
+  final_metadata="{\"pre_backup\": $pre_backup_stats, \"post_backup\": $post_backup_stats, \"timestamp\": \"$(date -Iseconds)\"}"
+fi
 
 echo "$final_metadata" > "$metadata_file"
 echo "✅ Métadonnées sauvegardées: $metadata_file"
@@ -201,7 +278,7 @@ while IFS= read -r -d '' old_file; do
 done < <(find "$BACKUP_DIR" -name "monitoring_*.sql.gz" -type f -mtime "+$RETENTION_DAYS" -print0 2>/dev/null)
 
 # Nettoyage métadonnées correspondantes
-find "$METADATA_DIR" -name "*.json" -type f -mtime "+$RETENTION_DAYS" -delete 2>/dev/null
+find "$METADATA_DIR" -name "*.json" -type f -mtime "+$RETENTION_DAYS" -delete 2>/dev/null || true
 
 echo "✅ ${deleted_count} ancien(s) backup(s) supprimé(s)"
 
@@ -209,16 +286,19 @@ echo "✅ ${deleted_count} ancien(s) backup(s) supprimé(s)"
 echo "→ Vérification fraîcheur backups..."
 recent_backups=$(find "$BACKUP_DIR" -name "monitoring_*.sql.gz" -type f -mtime "-1" 2>/dev/null | wc -l)
 if [[ $recent_backups -eq 0 ]]; then
-  echo "⚠️  ATTENTION: Aucun backup créé dans les dernières 24h"
+  warning_msg="Aucun backup créé dans les dernières 24h"
+  echo "⚠️  ATTENTION: $warning_msg"
+  send_alert "$warning_msg"
 fi
 
 oldest_backup=$(find "$BACKUP_DIR" -name "monitoring_*.sql.gz" -type f -printf '%T@ %p\n' 2>/dev/null | \
-  sort -n | head -1 | cut -d' ' -f2-)
+  sort -n | head -1 | cut -d' ' -f2- || echo "")
 
 if [[ -n "$oldest_backup" ]]; then
   backup_age=$(( ( $(date +%s) - $(stat -c %Y "$oldest_backup") ) / 86400 ))
   if [[ $backup_age -gt $MAX_BACKUP_AGE ]]; then
-    echo "⚠️  ATTENTION: Plus ancien backup a ${backup_age} jours"
+    warning_msg="Plus ancien backup a ${backup_age} jours (max recommandé: ${MAX_BACKUP_AGE})"
+    echo "⚠️  ATTENTION: $warning_msg"
   fi
 fi
 
@@ -236,7 +316,7 @@ echo "   ✅ Métadonnées: $(basename "$metadata_file")"
 echo "   📁 Backups stockés: ${total_backups}"
 echo "   💾 Espace total: ${total_size_mb} MB"
 echo "   🗑️  Rétention: ${RETENTION_DAYS} jours"
-echo "   🔄 Prochain nettoyage: $(date -d "+${RETENTION_DAYS} days" '+%Y-%m-%d')"
+echo "   🔄 Prochain nettoyage: $(date -d "+${RETENTION_DAYS} days" '+%Y-%m-%d' 2>/dev/null || date '+%Y-%m-%d')"
 echo "════════════════════════════════════════════════════════════"
 
 # --- 16. Nettoyage final -----------------------------------------------------
