@@ -14,7 +14,7 @@
 x-app-common: &app-common
   image: ${DOCKER_USERNAME}/monitoring-api:${VERSION:-latest}
   env_file: ../.env.production
-  working_dir: /app/server/server
+  working_dir: /app/server
   restart: always
   networks:
     - monitoring-net
@@ -40,7 +40,7 @@ services:
   migrate:
     <<: *app-common
     container_name: monitoring-migrate
-    command: ["alembic", "-c", "/app/server/server/alembic.ini", "upgrade", "head"]
+    command: ["alembic", "-c", "/app/server/alembic.ini", "upgrade", "head"]
     depends_on:
       db:
         condition: service_healthy
@@ -173,8 +173,6 @@ services:
       retries: 5
     volumes:
       - pg_data:/var/lib/postgresql/data
-    # ↓ AJOUTÉ: Sécurité renforcée
-    read_only: true
     tmpfs:
       - /tmp
       - /var/run/postgresql
@@ -290,7 +288,6 @@ services:
       - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/nginx/certs:ro
       - certbot_data:/var/www/certbot:ro
-    env_file: ../.env.production
     depends_on:
       web:
         condition: service_healthy
