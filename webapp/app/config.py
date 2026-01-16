@@ -1,9 +1,12 @@
 # webapp/app/config.py
 from __future__ import annotations
 
-from functools import lru_cache
-from pydantic_settings import BaseSettings, SettingsConfigDict
+"""
+Configuration WebApp.
+"""
 
+from functools import lru_cache
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -19,8 +22,6 @@ class Settings(BaseSettings):
       - REFRESH_COOKIE  : nom du cookie de refresh (aligné avec l'API)
     """
     API_BASE_URL: str = "http://api:8000"
-    DEV_API_KEY: str | None = None
-    API_KEY : str | None = None
     LOGIN_PATH: str = "/login"
     PUBLIC_PATHS: str = "/login,/logout,/static,/_health,/health"
 
