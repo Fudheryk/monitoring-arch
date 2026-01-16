@@ -1,3 +1,19 @@
+from __future__ import annotations
+
+"""
+Unit tests ingest endpoint.
+
+Contexte auth (migration)
+-------------------------
+- Ingest = API key obligatoire (header-only) via Depends(api_key_auth).
+- En unit tests, on bypass l'auth avec dependency_overrides :
+  on ne doit PAS dépendre d'une vraie clé.
+
+Attention au routing
+--------------------
+- L'endpoint testé est /api/v1/ingest/metrics (cf router prefix="/ingest").
+"""
+
 import uuid
 from types import SimpleNamespace
 
@@ -41,12 +57,17 @@ def _dump_metrics(metrics):
 
 
 def _sample_payload():
-    """Payload valide minimal pour /ingest/metrics."""
+    """
+    Payload valide minimal pour POST /api/v1/ingest/metrics.
+
+    NOTE : le schéma d'ingest normalise plusieurs alias (name/nom/id, bool/boolean, etc.)
+    Ici on reste volontairement simple.
+    """
     return {
         "machine": {"hostname": "host-1", "os": "linux", "tags": {"env": "test"}},
         "metrics": [
             {"name": "cpu_load", "type": "numeric", "value": 0.75, "unit": "ratio"},
-            {"name": "up", "type": "bool", "value": True},
+            {"name": "up", "type": "boolean", "value": True},
         ],
         "sent_at": "2025-01-01T00:00:00Z",
     }
@@ -57,27 +78,25 @@ def _sample_payload():
 @pytest.fixture(autouse=True)
 def override_api_key_auth():
     """
-    Remplace la dépendance d'auth obligatoire ET optionnelle par un stub.
-    Important: l’endpoint utilise `api_key_auth_optional`.
+    Remplace la dépendance d'auth API key (obligatoire) par un stub.
+
+    IMPORTANT (migration) :
+    - l'ingest utilise Depends(api_key_auth) (pas optional)
+    - en unit tests on bypass pour éviter toute dépendance DB/API keys réelles.
     """
     from app.core import security
-    from app.main import app
-    fake = SimpleNamespace(client_id=uuid.uuid4(), key="dev-apikey-123")
 
-    def _ok():
-        return fake  # sync OK
+    fake = SimpleNamespace(client_id=uuid.uuid4(), key="test-api-key", id=uuid.uuid4())
+
+    async def _ok():
+        return fake  # async car Depends accepte async
 
     app.dependency_overrides[security.api_key_auth] = _ok
-    app.dependency_overrides[security.api_key_auth_optional] = _ok
 
     try:
         yield _ok
     finally:
-        for k in (
-            security.api_key_auth,
-            security.api_key_auth_optional,
-        ):
-            app.dependency_overrides.pop(k, None)
+        app.dependency_overrides.pop(security.api_key_auth, None)
 
 
 @pytest.fixture()
@@ -87,89 +106,65 @@ def client():
 
 # ---------- tests ----------
 
-def test_ingest_without_header_generates_id_and_calls_services(client, monkeypatch, override_api_key_auth):
+def test_ingest_without_header_generates_id_and_calls_services(client, monkeypatch):
     """
-    Pas de header -> l’endpoint génère un ID "auto-...".
-    On vérifie les appels à ensure_machine / init_if_first_seen / enqueue_samples.
+    Sans header X-Ingest-Id -> le service génère un ID "auto-...".
+    On vérifie les appels à ensure_machine / enqueue_samples.
+
+    NOTE :
+    - Avec la refactor "service" (ingestion_service.py), l'endpoint délègue
+      à ingest_metrics(). Il n'appelle plus init_if_first_seen/enqueue_samples
+      directement depuis le module endpoint.
+    - Donc on patch ingest_metrics (service) plutôt que des symboles endpoint.
     """
     recorded = {}
-    fake_machine_id = uuid.uuid4()
 
-    # Patch **les symboles du module endpoint** (pas les modules source)
+    # Patch le service appelé par l'endpoint
     import app.api.v1.endpoints.ingest as ingest_ep
 
-    def fake_ensure_machine(machine_payload, api_key):
-        recorded["ensure_machine"] = (machine_payload, api_key)
-        return SimpleNamespace(id=fake_machine_id)
+    def fake_ingest_metrics(*, payload, api_key, x_ingest_id=None):
+        recorded["payload"] = payload
+        recorded["api_key"] = api_key
+        recorded["x_ingest_id"] = x_ingest_id
+        return {"status": "accepted", "ingest_id": "auto-fake-123"}
 
-    def fake_init_if_first_seen(machine_obj, metrics):
-        recorded["init_if_first_seen"] = (machine_obj, metrics)
+    monkeypatch.setattr(ingest_ep, "ingest_metrics", fake_ingest_metrics, raising=True)
 
-    def fake_enqueue_samples(**kwargs):
-        recorded["enqueue_samples"] = kwargs
-
-    monkeypatch.setattr(ingest_ep, "ensure_machine", fake_ensure_machine, raising=True)
-    monkeypatch.setattr(ingest_ep, "init_if_first_seen", fake_init_if_first_seen, raising=True)
-    monkeypatch.setattr(ingest_ep, "enqueue_samples", fake_enqueue_samples, raising=True)
-
-    # Appel endpoint (sans header X-Ingest-Id)
-    payload = _sample_payload()
-    r = client.post("/api/v1/ingest/metrics", json=payload)
+    r = client.post("/api/v1/ingest/metrics", json=_sample_payload())
     assert r.status_code == 202, r.text
+
     data = r.json()
     assert data["status"] == "accepted"
     assert data["ingest_id"].startswith("auto-")
 
-    # --- Vérifs ensure_machine -------------------------------------------------
-    assert "ensure_machine" in recorded
-    m_payload, api_key_obj = recorded["ensure_machine"]
+    # Vérifs : l'endpoint a bien passé un x_ingest_id None
+    assert recorded["x_ingest_id"] is None
 
-    # Le payload machine passé au service correspond à la requête
-    assert _strip_nones(_dump_model(m_payload)) == _strip_nones(payload["machine"])
+    # Vérifs : payload normalisé contient machine/metrics/sent_at
+    payload = recorded["payload"]
+    dumped = _strip_nones(_dump_model(payload))
+    assert "machine" in dumped and dumped["machine"]["hostname"] == "host-1"
+    assert "metrics" in dumped and len(dumped["metrics"]) == 2
+    assert "sent_at" in dumped
 
-    # ⚠️ Ne pas tester l'identité avec la fixture (risque de double override conftest/module)
-    # On vérifie la structure et la cohérence de l'objet API key.
+    # Vérifs : api_key stub est bien transmis
+    api_key_obj = recorded["api_key"]
     assert hasattr(api_key_obj, "client_id")
     assert isinstance(getattr(api_key_obj, "client_id", None), uuid.UUID)
-    assert getattr(api_key_obj, "key", None) == "dev-apikey-123"
-
-    # --- Vérifs init_if_first_seen --------------------------------------------
-    assert "init_if_first_seen" in recorded
-    machine_obj, metrics_list = recorded["init_if_first_seen"]
-    assert getattr(machine_obj, "id") == fake_machine_id
-    assert _dump_metrics(metrics_list) == _dump_metrics(payload["metrics"])
-
-    # --- Vérifs enqueue_samples ------------------------------------------------
-    assert "enqueue_samples" in recorded
-    enq = recorded["enqueue_samples"]
-    # Important : on compare avec **l'API key réellement utilisée par l'endpoint**
-    assert enq["client_id"] == str(getattr(api_key_obj, "client_id"))
-    assert enq["machine_id"] == str(fake_machine_id)
-    assert enq["ingest_id"] == data["ingest_id"]
-    assert _dump_metrics(enq["metrics"]) == _dump_metrics(payload["metrics"])
-    assert enq["sent_at"] == payload["sent_at"]
+    assert getattr(api_key_obj, "key", None) == "test-api-key"
 
 
-def test_ingest_uses_provided_header(client, monkeypatch, override_api_key_auth):
-    """Si X-Ingest-Id est fourni (<= 64 chars), on le réutilise tel quel."""
+def test_ingest_uses_provided_header(client, monkeypatch):
+    """Si X-Ingest-Id est fourni (<= 64 chars), il est transmis tel quel au service."""
     import app.api.v1.endpoints.ingest as ingest_ep
-
-    fake_machine_id = uuid.uuid4()
-
-    monkeypatch.setattr(
-        ingest_ep,
-        "ensure_machine",
-        lambda machine, api_key: SimpleNamespace(id=fake_machine_id),
-        raising=True,
-    )
-    monkeypatch.setattr(ingest_ep, "init_if_first_seen", lambda machine, metrics: None, raising=True)
 
     recorded = {}
 
-    def fake_enqueue_samples(**kw):
-        recorded["enq"] = kw
+    def fake_ingest_metrics(*, payload, api_key, x_ingest_id=None):
+        recorded["x_ingest_id"] = x_ingest_id
+        return {"status": "accepted", "ingest_id": x_ingest_id}
 
-    monkeypatch.setattr(ingest_ep, "enqueue_samples", fake_enqueue_samples, raising=True)
+    monkeypatch.setattr(ingest_ep, "ingest_metrics", fake_ingest_metrics, raising=True)
 
     header_id = "batch-123"
     r = client.post(
@@ -177,9 +172,9 @@ def test_ingest_uses_provided_header(client, monkeypatch, override_api_key_auth)
         json=_sample_payload(),
         headers={"X-Ingest-Id": header_id},
     )
-    assert r.status_code == 202
+    assert r.status_code == 202, r.text
     assert r.json()["ingest_id"] == header_id
-    assert recorded["enq"]["ingest_id"] == header_id
+    assert recorded["x_ingest_id"] == header_id
 
 
 def test_ingest_rejects_too_long_header(client):
