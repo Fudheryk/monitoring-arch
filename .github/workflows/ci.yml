@@ -1,12 +1,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# CI optimisée : unit shardé → (integration ∥ e2e) → aggregate GLOBALE → gate + reports
-# 
-# CORRECTIONS:
-# - Fichiers coverage sans point initial pour éviter les problèmes d'upload
-# - Agrégation globale de TOUS les types de tests (unit + integration + e2e)
-# - Noms d'artifacts plus clairs
-# - Gestion robuste des fichiers de coverage
-# ──────────────────────────────────────────────────────────────────────────────
+# CI optimisée : unit shardé → (integration ∥ e2e) → aggregate GLOBAL → gate
+#
+# Corrections / hardening :
+# - Coverage : on utilise toujours pytest-cov (coverage CLI seul ne suffit pas)
+# - Coverage combine : on combine des fichiers de données coverage (sqlite),
+#   pas des fichiers "texte". On évite de créer des faux coverage vides.
+# - Artifacts : pattern download correct + merge-multiple pour simplifier
+# - Logs : diagnostics plus riches en cas de timeout
+# - Codecov : condition fiable (secret présent)
+# ─────────────────────────────────────────────────────────────────────────────
 
 name: CI
 
@@ -22,13 +24,14 @@ permissions:
   contents: read
 
 env:
-  # AJOUT: seuil de couverture configurable au niveau pipeline
+  # Seuil de couverture configurable
   MIN_COVERAGE: "70"
+  # Endpoints CI
+  API: http://localhost:8000
 
 jobs:
-
   # ────────────────────────────────────────────────────────────────────────────
-  # 1) UNIT — sharding x4 + xdist + coverage par shard (fichiers sans point initial)
+  # 1) UNIT — sharding x4 + xdist + coverage par shard
   # ────────────────────────────────────────────────────────────────────────────
   unit:
     runs-on: ubuntu-latest
@@ -37,7 +40,7 @@ jobs:
     services:
       redis:
         image: redis:7-alpine
-        ports: [ "6379:6379" ]
+        ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -52,12 +55,10 @@ jobs:
     env:
       PYTHONPATH: server
       ENV_FILE: /dev/null
-      DATABASE_URL: 'sqlite+pysqlite:///:memory:'
-      REDIS_URL: redis://localhost:6379/0
+      DATABASE_URL: "sqlite+pysqlite:///:memory:"
+      REDIS_URL: "redis://localhost:6379/0"
       STUB_SLACK: "1"
       ALERT_REMINDER_MINUTES: "1"
-      KEY: dev-apikey-123
-      API: http://localhost:8000
 
     steps:
       - name: Checkout
@@ -66,89 +67,96 @@ jobs:
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Cache pip dependencies
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-py311-pip-${{ hashFiles('requirements*.txt') }}-v2
+          key: ${{ runner.os }}-py311-pip-${{ hashFiles('requirements*.txt') }}-v3
           restore-keys: |
             ${{ runner.os }}-py311-pip-${{ hashFiles('requirements*.txt') }}
             ${{ runner.os }}-py311-pip-
 
       - name: Install dependencies
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          pip install pytest-split pytest-xdist coverage
+          # Dépendances CI
+          pip install pytest-split pytest-xdist pytest-cov coverage
 
       - name: Verify environment
         run: |
+          set -euo pipefail
           echo "PYTHONPATH=$PYTHONPATH"
-          python -c "
-          import sys; 
-          print('Python path OK'); 
-          from app.core.config import settings; 
-          print('Settings import OK')
-          "
+          python - <<'PY'
+          from app.core.config import settings
+          print("Settings import OK")
+          PY
 
       - name: Run unit tests (shard ${{ matrix.shard }})
         env:
           CELERY_TASK_ALWAYS_EAGER: "1"
-          # IMPORTANT: Nom sans point initial pour éviter les problèmes d'upload
+          # Fichier coverage (sans point initial) => artifact facile
           COVERAGE_FILE: "coverage-unit-shard-${{ matrix.shard }}.data"
         run: |
           set -euo pipefail
-          
-          echo "→ Running shard ${{ matrix.shard }}/4 with coverage file: $COVERAGE_FILE"
-          
-          # Tentative pytest-split d'abord
-          if pytest -m "unit or contract" --splits 4 --group ${{ matrix.shard }} -n auto \
+
+          echo "→ Running shard ${{ matrix.shard }}/4"
+          echo "→ COVERAGE_FILE=$COVERAGE_FILE"
+
+          # Important : pytest-cov écrit dans COVERAGE_FILE via coverage.py
+          if pytest -m "unit or contract" \
+                --splits 4 --group ${{ matrix.shard }} \
+                -n auto \
                 --cov=server/app --cov-config=.coveragerc --cov-branch \
                 --cov-report=term-missing:skip-covered --cov-fail-under=0 \
                 --maxfail=3 --tb=short; then
             echo "✅ pytest-split succeeded"
           else
             echo "⚠️  pytest-split failed, trying file-based fallback..."
-            
+
             mapfile -t TEST_FILES < <(find server/tests -name "*test*.py" -type f | sort)
             TOTAL=${#TEST_FILES[@]}
-            
-            if [[ $TOTAL -eq 0 ]]; then 
+
+            if [[ $TOTAL -eq 0 ]]; then
               echo "❌ No test files found"
               exit 1
             fi
-            
+
             SIZE=$(( (TOTAL + 3) / 4 ))
             START=$(( (${{ matrix.shard }} - 1) * SIZE ))
             SLICE=( "${TEST_FILES[@]:$START:$SIZE}" )
-            
+
             if [[ ${#SLICE[@]} -eq 0 ]]; then
-              echo "⚠️  No tests for shard ${{ matrix.shard }}, creating empty coverage"
-              echo "# Empty shard" > "$COVERAGE_FILE"
-            else
-              echo "Running ${#SLICE[@]} test files:"
-              printf '  %s\n' "${SLICE[@]}"
-              
-              pytest -n auto "${SLICE[@]}" -m "unit or contract" \
-                --cov=server/app --cov-config=.coveragerc --cov-branch \
-                --cov-report=term-missing:skip-covered --cov-fail-under=0 \
-                --maxfail=3 --tb=short
+              echo "⚠️  No tests for shard ${{ matrix.shard }} (this is unexpected)."
+              # On n'écrit PAS de faux coverage (ça casserait combine). On sort en succès
+              # seulement si tu acceptes les shards vides (rare). Ici, on échoue :
+              exit 1
             fi
+
+            echo "Running ${#SLICE[@]} test files:"
+            printf '  %s\n' "${SLICE[@]}"
+
+            pytest -n auto "${SLICE[@]}" -m "unit or contract" \
+              --cov=server/app --cov-config=.coveragerc --cov-branch \
+              --cov-report=term-missing:skip-covered --cov-fail-under=0 \
+              --maxfail=3 --tb=short
           fi
 
-          # Vérification et renommage si nécessaire
-          if [[ -f .coverage && ! -f "$COVERAGE_FILE" ]]; then 
-            mv .coverage "$COVERAGE_FILE"
-          fi
-          
+          # Vérifier que le fichier coverage existe et est non vide
           if [[ ! -f "$COVERAGE_FILE" ]]; then
             echo "❌ Coverage file $COVERAGE_FILE not found"
-            ls -la coverage* .coverage* || true
+            ls -la . || true
             exit 1
           fi
-          
+          if [[ ! -s "$COVERAGE_FILE" ]]; then
+            echo "❌ Coverage file $COVERAGE_FILE is empty"
+            ls -la "$COVERAGE_FILE" || true
+            exit 1
+          fi
+
           echo "✅ Coverage file created: $(ls -lh "$COVERAGE_FILE")"
 
       - name: Upload shard coverage
@@ -161,16 +169,15 @@ jobs:
           if-no-files-found: error
 
   # ────────────────────────────────────────────────────────────────────────────
-  # 2) INTEGRATION — Docker + coverage avec nom de fichier sans point
+  # 2) INTEGRATION — Docker + coverage (host + containers)
   # ────────────────────────────────────────────────────────────────────────────
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    
+
     env:
       STUB_SLACK: "1"
       ALERT_REMINDER_MINUTES: "1"
-      KEY: dev-apikey-123
       API: http://localhost:8000
 
     steps:
@@ -180,35 +187,28 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-docker-${{ hashFiles('server/Dockerfile', 'requirements*.txt', 'docker/*') }}-v2
-          restore-keys: |
-            ${{ runner.os }}-docker-${{ hashFiles('server/Dockerfile', 'requirements*.txt') }}
-            ${{ runner.os }}-docker-
-
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-py311-integ-${{ hashFiles('requirements*.txt') }}-v2
+          key: ${{ runner.os }}-py311-integ-${{ hashFiles('requirements*.txt') }}-v3
 
       - name: Install dependencies
         run: |
+          set -euo pipefail
           python -m pip install -U pip
           pip install -r requirements-dev.txt
           pip install "psycopg[binary]>=3.1,<4.0"
-          pip install coverage
+          pip install pytest-cov coverage
 
       - name: Prepare environment
         run: |
+          set -euo pipefail
           cp .env.example .env.docker
           cat >> .env.docker << 'EOF'
           SLACK_WEBHOOK=http://httpbin:80/status/204
@@ -222,133 +222,120 @@ jobs:
         env:
           API_COVERAGE: "1"
           WORKER_COVERAGE: "1"
-          COVERAGE_FILE: "/app/server/coverage-api-container.data"
-          DOCKER_BUILDKIT: 1
-          BUILDKIT_INLINE_CACHE: 1
+          DOCKER_BUILDKIT: "1"
+          BUILDKIT_INLINE_CACHE: "1"
         run: |
+          set -euo pipefail
           docker compose --env-file ../.env.docker build api worker
           docker compose --env-file ../.env.docker up -d db redis api worker
 
-      - name: Wait for database
+      - name: Wait for services (DB + migrations + API health)
         working-directory: docker
+        shell: bash
         run: |
-          echo "Waiting for PostgreSQL to be ready..."
-          for attempt in {1..30}; do
-            if docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres -d postgres; then
-              echo "✅ Database ready after ${attempt}s"
+          set -euo pipefail
+          dc() { docker compose --env-file ../.env.docker "$@"; }
+
+          echo "==> Wait DB (pg_isready)"
+          for i in {1..60}; do
+            if dc exec -T db pg_isready -U postgres >/dev/null 2>&1; then
+              echo "✅ DB ready (attempt $i)"
               break
             fi
-            if [[ $attempt -eq 30 ]]; then
-              echo "❌ Database failed to start"
-              docker compose logs db
+            if [[ "$i" -eq 60 ]]; then
+              echo "❌ DB timeout"
+              dc ps || true
+              dc logs db | tail -200 || true
               exit 1
             fi
-            echo "Attempt $attempt/30..."
             sleep 1
           done
 
-      - name: Run migrations
-        working-directory: docker
-        run: |
-          docker compose --env-file ../.env.docker run --rm -w /app/server api \
-            alembic -c /app/server/alembic.ini upgrade head
+          echo "==> Alembic upgrade head"
+          if ! dc run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head; then
+            echo "❌ Alembic upgrade failed"
+            dc ps || true
+            dc logs api | tail -200 || true
+            dc logs db | tail -200 || true
+            exit 1
+          fi
 
-      - name: Wait for API health
-        run: |
-          echo "Waiting for API to be healthy..."
-          for attempt in {1..30}; do
-            if curl -fsS -m 5 -H "X-API-Key: $KEY" "$API/api/v1/health" >/dev/null 2>&1; then
-              echo "✅ API healthy after ${attempt}s"
+          echo "==> Wait API health (PUBLIC)"
+          for i in {1..60}; do
+            if curl -fsS -m 2 "${API}/api/v1/health" >/dev/null 2>&1; then
+              echo "✅ API healthy (attempt $i)"
               break
             fi
-            if [[ $attempt -eq 30 ]]; then
-              echo "❌ API failed to be healthy"
-              docker compose -f docker/docker-compose.yml logs api | tail -50
+            if [[ "$i" -eq 60 ]]; then
+              echo "❌ API timeout"
+              dc ps || true
+              dc logs api | tail -200 || true
+              dc logs worker | tail -200 || true
+              dc logs db | tail -200 || true
               exit 1
             fi
-            echo "Attempt $attempt/30..."
             sleep 1
           done
 
-      - name: Run integration tests
+      - name: Run integration tests (host) with coverage
         env:
           PYTHONPATH: server
-          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=10'
-          # Nom sans point initial
+          DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=10"
           COVERAGE_FILE: "coverage-integration-host.data"
         run: |
+          set -euo pipefail
           pytest -m "integration" -v --tb=short \
             --cov=server/app --cov-config=.coveragerc --cov-branch \
             --cov-report=term-missing:skip-covered --cov-fail-under=0
 
-      - name: Stop coverage services and collect files
+      - name: Stop coverage services and collect container coverage
         working-directory: docker
+        shell: bash
         run: |
+          set -euo pipefail
+          dc() { docker compose --env-file ../.env.docker "$@"; }
+
           echo "Stopping services to flush coverage..."
-          docker compose --env-file ../.env.docker stop api worker || true
+          dc stop api worker || true
           sleep 2
-          
+
+          # Les fichiers coverage des containers doivent être produits par l’entrypoint
+          # (ex: COVERAGE_FILE=/app/server/coverage-*.data) quand API_COVERAGE/WORKER_COVERAGE=1
           echo "Copying coverage files from containers..."
-          # Copie du fichier API si il existe
-          docker compose --env-file ../.env.docker cp api:/app/server/coverage-api-container.data ../coverage-integration-api.data || {
-            echo "⚠️  No API coverage file found in container"
-          }
-          
-          # Copie du fichier worker si il existe
-          docker compose --env-file ../.env.docker cp worker:/app/server/coverage-worker-container.data ../coverage-integration-worker.data || {
-            echo "⚠️  No worker coverage file found in container"
-          }
+          dc cp api:/app/server/coverage-api-container.data ../coverage-integration-api.data || echo "⚠️  No API coverage file"
+          dc cp worker:/app/server/coverage-worker-container.data ../coverage-integration-worker.data || echo "⚠️  No worker coverage file"
 
       - name: Combine integration coverage
         run: |
           set -euo pipefail
-          
-          echo "=== Available integration coverage files ==="
-          find . -maxdepth 1 -name "coverage-integration*" -type f -exec ls -lh {} \; || true
-          
-          # Collecte de tous les fichiers integration non vides
+
           files=()
-          for pattern in "coverage-integration-host.data" "coverage-integration-api.data" "coverage-integration-worker.data"; do
-            if [[ -f "$pattern" && -s "$pattern" ]]; then
-              files+=("$pattern")
+          for f in coverage-integration-host.data coverage-integration-api.data coverage-integration-worker.data; do
+            if [[ -f "$f" && -s "$f" ]]; then
+              files+=("$f")
             fi
           done
-          
+
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "❌ No integration coverage files to combine"
+            ls -la . || true
             exit 1
           fi
-          
-          echo "=== Combining ${#files[@]} integration files ==="
-          printf '%s\n' "${files[@]}"
-          
-          # Combine avec nom de sortie standard
+
+          echo "Combining integration files:"
+          printf ' - %s\n' "${files[@]}"
+
           COVERAGE_FILE=coverage-integration-combined.data coverage combine "${files[@]}"
           COVERAGE_FILE=coverage-integration-combined.data coverage xml -o coverage-integration.xml
           COVERAGE_FILE=coverage-integration-combined.data coverage html -d htmlcov-integration
           COVERAGE_FILE=coverage-integration-combined.data coverage report --skip-covered
-          
-          echo "✅ Integration coverage: $(ls -lh coverage-integration.xml)"
 
       - name: Upload integration coverage data
         uses: actions/upload-artifact@v4
         with:
           name: integration-coverage-data
           path: coverage-integration-combined.data
-
-      - name: Upload integration coverage XML
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-coverage-xml
-          path: coverage-integration.xml
-
-      - name: Upload HTML report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: htmlcov-integration
-          path: htmlcov-integration/
-          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Cleanup
         if: always()
@@ -356,16 +343,15 @@ jobs:
         run: docker compose --env-file ../.env.docker down -v --remove-orphans
 
   # ────────────────────────────────────────────────────────────────────────────
-  # 3) E2E — même logique avec noms de fichiers corrects
+  # 3) E2E — Docker + coverage (host + api container)
   # ────────────────────────────────────────────────────────────────────────────
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    
+
     env:
       STUB_SLACK: "1"
       ALERT_REMINDER_MINUTES: "1"
-      KEY: dev-apikey-123
       API: http://localhost:8000
 
     steps:
@@ -375,28 +361,22 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-docker-${{ hashFiles('server/Dockerfile', 'requirements*.txt', 'docker/*') }}-v2
-          restore-keys: |
-            ${{ runner.os }}-docker-${{ hashFiles('server/Dockerfile', 'requirements*.txt') }}
-            ${{ runner.os }}-docker-
-
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
+          set -euo pipefail
           python -m pip install -U pip
           pip install -r requirements-dev.txt
           pip install "psycopg[binary]>=3.1,<4.0"
+          pip install pytest-cov coverage
 
       - name: Prepare environment
         run: |
+          set -euo pipefail
           cp .env.example .env.docker
           cat >> .env.docker << 'EOF'
           SLACK_WEBHOOK=http://httpbin:80/status/204
@@ -409,106 +389,125 @@ jobs:
         working-directory: docker
         env:
           API_COVERAGE: "1"
-          COVERAGE_FILE: "/app/server/coverage-e2e-api.data"
-          DOCKER_BUILDKIT: 1
-          BUILDKIT_INLINE_CACHE: 1
+          DOCKER_BUILDKIT: "1"
+          BUILDKIT_INLINE_CACHE: "1"
         run: |
+          set -euo pipefail
           docker compose --env-file ../.env.docker up -d --build db redis api
 
-      - name: Wait for services
+      - name: Wait for services (DB + migrations + API health)
         working-directory: docker
+        shell: bash
         run: |
-          # DB
-          for i in {1..30}; do
-            if docker compose --env-file ../.env.docker exec -T db pg_isready -U postgres; then
+          set -euo pipefail
+          dc() { docker compose --env-file ../.env.docker "$@"; }
+
+          echo "==> Wait DB (pg_isready)"
+          for i in {1..60}; do
+            if dc exec -T db pg_isready -U postgres >/dev/null 2>&1; then
+              echo "✅ DB ready (attempt $i)"
               break
             fi
-            [[ $i -eq 30 ]] && { echo "❌ DB timeout"; docker compose logs db; exit 1; }
+            if [[ "$i" -eq 60 ]]; then
+              echo "❌ DB timeout"
+              dc ps || true
+              dc logs db | tail -200 || true
+              exit 1
+            fi
             sleep 1
           done
-          
-          # Migrations
-          docker compose --env-file ../.env.docker run --rm -w /app/server api \
-            alembic -c /app/server/alembic.ini upgrade head
-          
-          # API
-          for i in {1..30}; do
-            if curl -fsS -m 5 -H "X-API-Key: ${{ env.KEY }}" "${{ env.API }}/api/v1/health" >/dev/null; then
+
+          echo "==> Alembic upgrade head"
+          if ! dc run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head; then
+            echo "❌ Alembic upgrade failed"
+            dc ps || true
+            dc logs api | tail -200 || true
+            dc logs db | tail -200 || true
+            exit 1
+          fi
+
+          echo "==> Wait API health (PUBLIC)"
+          for i in {1..60}; do
+            if curl -fsS -m 2 "${API}/api/v1/health" >/dev/null 2>&1; then
+              echo "✅ API healthy (attempt $i)"
               break
             fi
-            [[ $i -eq 30 ]] && { echo "❌ API timeout"; docker compose logs api | tail -30; exit 1; }
+            if [[ "$i" -eq 60 ]]; then
+              echo "❌ API timeout"
+              dc ps || true
+              dc logs api | tail -200 || true
+              exit 1
+            fi
             sleep 1
           done
 
       - name: Run smoke tests
         if: hashFiles('scripts/smoke_http_targets.sh') != ''
+        env:
+          # Ton script smoke lit KEY côté env : en CI, assure-toi que KEY est bien fourni.
+          # Si tu veux "0 traces" côté CI, fais en sorte que la clé seedée soit injectée
+          # via secrets / env, pas en dur dans le repo.
+          KEY: ${{ env.KEY }}
         run: |
+          set -euo pipefail
           if [[ -x scripts/smoke_http_targets.sh ]]; then
             bash scripts/smoke_http_targets.sh
           else
-            echo "⚠️  Smoke script not found or not executable"
+            echo "⚠️  Smoke script not executable"
+            exit 1
           fi
 
-      - name: Run E2E tests
+      - name: Run E2E tests (host) with coverage
         env:
           PYTHONPATH: server
-          DATABASE_URL: 'postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=10'
+          DATABASE_URL: "postgresql+psycopg://postgres:postgres@localhost:5432/monitoring?connect_timeout=10"
           COVERAGE_FILE: "coverage-e2e-host.data"
+          E2E_STACK_UP: "1"
         run: |
+          set -euo pipefail
           pytest -m "e2e" -v --tb=short \
             --cov=server/app --cov-config=.coveragerc --cov-branch \
             --cov-report=term-missing:skip-covered --cov-fail-under=0
 
-      - name: Stop API and collect coverage
+      - name: Stop API and collect container coverage
         working-directory: docker
+        shell: bash
         run: |
-          docker compose --env-file ../.env.docker stop api || true
+          set -euo pipefail
+          dc() { docker compose --env-file ../.env.docker "$@"; }
+
+          dc stop api || true
           sleep 2
-          
-          # Copie du fichier API E2E
-          docker compose --env-file ../.env.docker cp api:/app/server/coverage-e2e-api.data ../coverage-e2e-api-container.data || {
-            echo "⚠️  No E2E API coverage file found"
-          }
+          dc cp api:/app/server/coverage-e2e-api.data ../coverage-e2e-api-container.data || echo "⚠️  No E2E API coverage file"
 
       - name: Combine E2E coverage
         run: |
           set -euo pipefail
-          
-          # Collecte des fichiers E2E
+
           files=()
-          for pattern in "coverage-e2e-host.data" "coverage-e2e-api-container.data"; do
-            if [[ -f "$pattern" && -s "$pattern" ]]; then
-              files+=("$pattern")
+          for f in coverage-e2e-host.data coverage-e2e-api-container.data; do
+            if [[ -f "$f" && -s "$f" ]]; then
+              files+=("$f")
             fi
           done
-          
-          [[ ${#files[@]} -eq 0 ]] && { echo "❌ No E2E coverage files"; exit 1; }
-          
-          echo "Combining E2E files: ${files[*]}"
+
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "❌ No E2E coverage files"
+            ls -la . || true
+            exit 1
+          fi
+
           COVERAGE_FILE=coverage-e2e-combined.data coverage combine "${files[@]}"
           COVERAGE_FILE=coverage-e2e-combined.data coverage xml -o coverage-e2e.xml
           COVERAGE_FILE=coverage-e2e-combined.data coverage html -d htmlcov-e2e
-          echo "✅ E2E coverage: $(ls -lh coverage-e2e.xml)"
+          COVERAGE_FILE=coverage-e2e-combined.data coverage report --skip-covered
 
       - name: Upload E2E coverage data
         uses: actions/upload-artifact@v4
         with:
           name: e2e-coverage-data
           path: coverage-e2e-combined.data
-
-      - name: Upload E2E coverage XML
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-coverage-xml
-          path: coverage-e2e.xml
-
-      - name: Upload HTML report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: htmlcov-e2e
-          path: htmlcov-e2e/
-          if-no-files-found: ignore
+          retention-days: 1
 
       - name: Cleanup
         if: always()
@@ -516,7 +515,7 @@ jobs:
         run: docker compose --env-file ../.env.docker down -v --remove-orphans
 
   # ────────────────────────────────────────────────────────────────────────────
-  # 4) AGRÉGATION GLOBALE — Unit + Integration + E2E
+  # 4) AGRÉGATION GLOBALE — Unit + Integration + E2E + gate coverage
   # ────────────────────────────────────────────────────────────────────────────
   aggregate-coverage:
     name: aggregate-all-coverage
@@ -530,120 +529,82 @@ jobs:
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install coverage
-        run: pip install coverage
+        run: |
+          set -euo pipefail
+          pip install coverage
 
       - name: Create staging directory
-        run: mkdir -p coverage-staging
+        run: mkdir -p coverage-staging/unit coverage-staging/integration coverage-staging/e2e
 
-      # Téléchargement de TOUS les artifacts de coverage
       - name: Download unit coverage artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: unit-coverage-shard-*
-          path: coverage-staging/unit/
-          merge-multiple: false
+          path: coverage-staging/unit
+          merge-multiple: true
 
       - name: Download integration coverage
         uses: actions/download-artifact@v4
         with:
           name: integration-coverage-data
-          path: coverage-staging/integration/
+          path: coverage-staging/integration
 
-      - name: Download E2E coverage  
+      - name: Download E2E coverage
         uses: actions/download-artifact@v4
         with:
           name: e2e-coverage-data
-          path: coverage-staging/e2e/
+          path: coverage-staging/e2e
 
       - name: Verify all downloads
         run: |
-          echo "=== All downloaded coverage artifacts ==="
-          find coverage-staging -type f -ls
-          
-          echo -e "\n=== Coverage data files breakdown ==="
-          echo "Unit shards:"
-          find coverage-staging/unit -name "*.data" -exec ls -lh {} \; || echo "  No unit files"
-          echo "Integration:"
-          find coverage-staging/integration -name "*.data" -exec ls -lh {} \; || echo "  No integration files"
-          echo "E2E:"
-          find coverage-staging/e2e -name "*.data" -exec ls -lh {} \; || echo "  No e2e files"
+          set -euo pipefail
+          echo "=== Downloaded coverage files ==="
+          find coverage-staging -type f -maxdepth 3 -ls || true
 
-      - name: Combine ALL coverage (unit + integration + e2e)
+      - name: Combine ALL coverage (unit + integration + e2e) + enforce threshold
+        env:
+          MIN_COVERAGE: ${{ env.MIN_COVERAGE }}
         run: |
           set -euo pipefail
-          
-          # Collecte de TOUS les fichiers de coverage non vides
+
           files=()
-          
-          # Unit shards
-          while IFS= read -r -d '' file; do
-            if [[ -s "$file" ]]; then
-              files+=("$file")
-              echo "Added unit: $file"
-            fi
-          done < <(find coverage-staging/unit -name "*.data" -type f -print0 2>/dev/null || true)
-          
-          # Integration
-          while IFS= read -r -d '' file; do
-            if [[ -s "$file" ]]; then
-              files+=("$file")
-              echo "Added integration: $file"
-            fi
-          done < <(find coverage-staging/integration -name "*.data" -type f -print0 2>/dev/null || true)
-          
-          # E2E
-          while IFS= read -r -d '' file; do
-            if [[ -s "$file" ]]; then
-              files+=("$file")
-              echo "Added e2e: $file"
-            fi
-          done < <(find coverage-staging/e2e -name "*.data" -type f -print0 2>/dev/null || true)
-          
+          while IFS= read -r -d '' f; do
+            [[ -s "$f" ]] && files+=("$f")
+          done < <(find coverage-staging -type f -name "*.data" -print0)
+
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "❌ No coverage files found for global aggregation"
-            echo "This means one or more test jobs failed to produce coverage"
             exit 1
           fi
-          
-          echo "=== Combining ${#files[@]} coverage files from ALL test types ==="
-          printf '%s\n' "${files[@]}"
-          
-          # Combine global
-          coverage combine "${files[@]}"
-          
-          # Génération des rapports finaux
+
+          echo "=== Combining ${#files[@]} coverage files ==="
+          printf ' - %s\n' "${files[@]}"
+
+          # Important : en mettant COVERAGE_FILE, on contrôle la sortie (.coverage ou autre)
+          COVERAGE_FILE=coverage-global.data coverage combine "${files[@]}"
+
           echo "=== GLOBAL COVERAGE REPORT ==="
-          coverage report --skip-covered --show-missing
-          
-          coverage xml -o coverage-global.xml  
-          coverage html -d htmlcov-global
-          
-          echo "✅ Global coverage combined: $(ls -lh coverage-global.xml)"
-          
-          # Stats par type (optionnel)
-          echo -e "\n=== Coverage Stats ==="
-          echo "Total files combined: ${#files[@]}"
-          unit_count=$(find coverage-staging/unit -name "*.data" -type f | wc -l)
-          integration_count=$(find coverage-staging/integration -name "*.data" -type f | wc -l)  
-          e2e_count=$(find coverage-staging/e2e -name "*.data" -type f | wc -l)
-          echo "  Unit shards: $unit_count"
-          echo "  Integration: $integration_count" 
-          echo "  E2E: $e2e_count"
+          COVERAGE_FILE=coverage-global.data coverage report --skip-covered --show-missing --fail-under="${MIN_COVERAGE}"
+
+          COVERAGE_FILE=coverage-global.data coverage xml -o coverage-global.xml
+          COVERAGE_FILE=coverage-global.data coverage html -d htmlcov-global
 
       - name: Upload global coverage XML
         uses: actions/upload-artifact@v4
         with:
           name: coverage-global-xml
           path: coverage-global.xml
+          retention-days: 7
 
       - name: Upload global coverage data
         uses: actions/upload-artifact@v4
         with:
           name: coverage-global-data
-          path: .coverage
+          path: coverage-global.data
+          retention-days: 7
 
       - name: Upload global HTML report
         if: always()
@@ -652,65 +613,59 @@ jobs:
           name: htmlcov-global
           path: htmlcov-global/
           if-no-files-found: ignore
+          retention-days: 7
 
-      # Bonus: upload vers des services externes si configuré
       - name: Upload to Codecov (if configured)
-        if: env.CODECOV_TOKEN != ''
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         run: |
+          set -euo pipefail
           curl -s https://codecov.io/bash | bash -s -- -f coverage-global.xml
 
   # ────────────────────────────────────────────────────────────────────────────
-  # 5) GATE — Point de passage unique avec rapport de coverage globale
+  # 5) GATE — job final (statut unique)
   # ────────────────────────────────────────────────────────────────────────────
   gate:
     name: ci-gate
     runs-on: ubuntu-latest
     needs: [unit, integration, e2e, aggregate-coverage]
     timeout-minutes: 5
-    
+
     steps:
       - name: All checks passed
         run: |
+          set -euo pipefail
           echo "🎉 ALL CI JOBS COMPLETED SUCCESSFULLY!"
           echo "✅ Unit tests (4 shards) - PASSED"
-          echo "✅ Integration tests - PASSED" 
+          echo "✅ Integration tests - PASSED"
           echo "✅ E2E tests - PASSED"
-          echo "✅ Global coverage aggregation - PASSED"
+          echo "✅ Global coverage aggregation (>= ${MIN_COVERAGE}%) - PASSED"
 
       - name: Download final coverage report
         uses: actions/download-artifact@v4
         with:
           name: coverage-global-xml
-          path: ./
+          path: .
 
       - name: Display coverage summary
         run: |
+          set -euo pipefail
           if [[ -f coverage-global.xml ]]; then
-            echo "=== FINAL COVERAGE SUMMARY ==="
-            python3 -c "
+            python3 - <<'PY'
             import xml.etree.ElementTree as ET
-            tree = ET.parse('coverage-global.xml')
-            root = tree.getroot()
-            line_rate = float(root.get('line-rate', 0)) * 100
-            branch_rate = float(root.get('branch-rate', 0)) * 100
-            print(f'Lines covered: {line_rate:.1f}%')
-            print(f'Branches covered: {branch_rate:.1f}%')
-            "
+            root = ET.parse("coverage-global.xml").getroot()
+            line_rate = float(root.get("line-rate", 0)) * 100
+            branch_rate = float(root.get("branch-rate", 0)) * 100
+            print(f"Lines covered: {line_rate:.1f}%")
+            print(f"Branches covered: {branch_rate:.1f}%")
+            PY
           else
-            echo "⚠️  Global coverage file not found"
+            echo "⚠️  coverage-global.xml not found"
+            exit 1
           fi
 
       - name: Quality gate check
         run: |
-          echo "🚪 All quality gates passed - ready for merge!"
-          echo ""
-          echo "Summary:"
-          echo "- ✅ All unit tests passed across 4 shards"
-          echo "- ✅ Integration tests with Docker stack passed"
-          echo "- ✅ End-to-end tests passed"
-          echo "- ✅ Coverage collected and aggregated from all test types"
-          echo "- ✅ No blocking issues detected"
-          echo ""
-          echo "This commit is safe to merge! 🚀"
+          set -euo pipefail
+          echo "🚪 All quality gates passed - ready for merge! 🚀"

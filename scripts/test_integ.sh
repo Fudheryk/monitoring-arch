@@ -2,8 +2,10 @@
 set -euo pipefail
 
 #  ─────────────────────────────────────────────────────────────────────────────
-# test_integ.sh — Démarre la stack (compose), applique les migrations, puis
-#                 lance les tests d'intégration côté hôte.
+# scripts/test_integ.sh
+#  ─────────────────────────────────────────────────────────────────────────────
+# Démarre la stack (docker compose), applique les migrations, puis lance les tests
+# d'intégration côté hôte.
 #
 # Points clés :
 # - Se place à la racine du repo (indépendant du CWD appelant)
@@ -14,25 +16,25 @@ set -euo pipefail
 #     2) ./.env.integration.host (pour overrides *hôte* ultérieurs)
 #     3) ./.env.docker (par défaut pour la stack docker)
 # - Attend DB (pg_isready) + applique migrations Alembic dans le conteneur 'api'
-# - Attend que l'API réponde (santé) vue de l'hôte
+# - Attend que l'API réponde via /api/v1/health (PUBLIC, sans header d'auth)
 # - Charge ENSUITE les overrides hôte (.env.integration.host) pour pytest
 # - Optionnel : CLEANUP=1 pour faire un 'docker compose down -v' à la fin
 # - DEBUG=1 pour activer 'set -x'
+#
 #
 # Couverture côté containers :
 # - WITH_COVERAGE=1 inclut l’overlay docker-compose.coverage.yml
 #   (API_COVERAGE/WORKER_COVERAGE, COVERAGE_FILE etc.). Les fragments sont
 #   écrits sous ./server/.coverage.* (utiles pour "combine" plus tard).
 #
-# Variables utiles (surchageables avant appel) :
+# Variables utiles (surchargeables avant appel) :
 #   API=http://localhost:8000
-#   KEY=dev-apikey-123
 #   INTEG_STACK_UP=1
 #   INTEG_ENV_FILE=/chemin/vers/mon/envfile
-#   WITH_COVERAGE=1        # active overlay de couverture pour API/worker
-#   CLEANUP=1              # teardown après tests
-#   DEBUG=1                # trace commandes
-# ──────────────────────────────────────────────────────────────────────────────
+#   WITH_COVERAGE=1              # active overlay de couverture pour API/worker
+#   CLEANUP=1                    # teardown après tests
+#   DEBUG=1                      # trace commandes
+#  ─────────────────────────────────────────────────────────────────────────────
 
 # ---------- Debug facultatif ----------
 if [[ "${DEBUG:-0}" == "1" ]]; then
@@ -51,7 +53,6 @@ fi
 
 # ---------- 1) Defaults hôte (ne PAS toucher à la DB avant compose up) ----------
 export API="${API:-http://localhost:8000}"
-export KEY="${KEY:-dev-apikey-123}"
 export INTEG_STACK_UP="${INTEG_STACK_UP:-1}"
 export WITH_COVERAGE="${WITH_COVERAGE:-0}"
 
@@ -59,7 +60,7 @@ export WITH_COVERAGE="${WITH_COVERAGE:-0}"
 unset DATABASE_URL || true
 unset PG_DSN || true
 
-# ---------- Helper: résolution en chemin absolu (realpath ou readlink -f) ----------
+# Helper: résolution en chemin absolu (realpath ou readlink -f)
 _abspath() {
   local p="$1"
   if command -v realpath >/dev/null 2>&1; then
@@ -67,6 +68,11 @@ _abspath() {
   else
     readlink -f "$p"
   fi
+}
+
+# Helper: KEY requise seulement si les tests appellent des endpoints API-key
+require_key() {
+  : "${KEY:?Missing KEY env var (API key). Example: KEY=<API_KEY> ./scripts/test_integ.sh}"
 }
 
 # ---------- 2) Choix du fichier d'env pour docker compose ----------
@@ -104,7 +110,7 @@ if [[ "${WITH_COVERAGE}" == "1" ]]; then
   fi
 fi
 
-# petit wrapper pour moins se répéter
+# Wrapper compose pour moins se répéter
 dco() { docker compose ${DC_FILES} --env-file "${ENV_FILE}" "$@"; }
 
 # ---------- 4) Monter la stack ----------
@@ -145,10 +151,11 @@ fi
 popd >/dev/null
 
 # ---------- 7) Attendre l'API exposée (vue de l'hôte) ----------
+# /api/v1/health est PUBLIC : aucun header d'auth ici.
 echo "[integ] Waiting for API health at ${API}/api/v1/health"
 ok_api=0
 for i in {1..60}; do
-  if curl -fsS -m 2 -H "X-API-Key: ${KEY}" "${API}/api/v1/health" >/dev/null; then
+  if curl -fsS -m 2 "${API}/api/v1/health" >/dev/null; then
     ok_api=1
     break
   fi
@@ -178,7 +185,6 @@ fi
 
 # Defaults de repli si non définis par le fichier ci-dessus
 export API="${API:-http://localhost:8000}"
-export KEY="${KEY:-dev-apikey-123}"
 export INTEG_STACK_UP="${INTEG_STACK_UP:-1}"
 
 # Si aucune DATABASE_URL hôte n’est définie, on propose un défaut sûr (localhost)
@@ -204,7 +210,7 @@ if ! pytest -m integration -vv -ra "$@"; then
   # Teardown si demandé
   if [[ "${CLEANUP:-0}" == "1" ]]; then
     echo "[integ] CLEANUP=1 → docker compose down -v"
-    pushd docker >/dev-null
+    pushd docker >/dev/null
     dco down -v || true
     popd >/dev/null
   fi

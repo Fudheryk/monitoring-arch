@@ -20,13 +20,11 @@
 JWT_SECRET=$(openssl rand -hex 32)
 DB_PASSWORD=$(openssl rand -base64 24)
 REDIS_PASSWORD=$(openssl rand -base64 24)
-API_KEY=$(openssl rand -hex 32)
 ```
 
 - [ ] `JWT_SECRET` généré (64+ caractères)
 - [ ] `DB_PASSWORD` généré et sécurisé
 - [ ] `REDIS_PASSWORD` généré et sécurisé
-- [ ] `API_KEY` généré
 - [ ] Mot de passe GMX `SMTP_PASSWORD` récupéré
 - [ ] `.env.production` créé et rempli
 - [ ] `.env.production` **JAMAIS** commité dans Git

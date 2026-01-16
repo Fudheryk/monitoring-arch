@@ -16,7 +16,6 @@ set -euo pipefail
 #
 # Variables utiles (surchageables avant appel) :
 #   API=http://localhost:8000
-#   KEY=dev-apikey-123
 #   DOCKER_DIR=docker
 #   WITH_COVERAGE=1          # active overlay docker-compose.coverage.yml
 #   START_WORKER=0           # 1 si vous voulez aussi démarrer le worker
@@ -29,7 +28,6 @@ set -euo pipefail
 
 # --- Paramètres par défaut ----------------------------------------------------
 : "${API:=http://localhost:8000}"
-: "${KEY:=dev-apikey-123}"
 : "${DOCKER_DIR:=docker}"
 : "${WITH_COVERAGE:=0}"
 : "${START_WORKER:=0}"
@@ -159,12 +157,13 @@ fi
 echo "[e2e] wait for API health on ${API}/api/v1/health"
 ok=0
 for (( i=1; i<=HEALTH_RETRIES; i++ )); do
-  if curl -fsS -m 2 -H "X-API-Key: ${KEY}" "${API}/api/v1/health" >/dev/null; then
+  if curl -fsS -m 2 "${API}/api/v1/health" >/dev/null; then
     ok=1
     break
   fi
   sleep 2
 done
+
 if [[ "${ok}" != "1" ]]; then
   echo "ERR: API not healthy after $((HEALTH_RETRIES*2))s" >&2
   dump_logs

@@ -1,19 +1,29 @@
 #!/usr/bin/env bash
 #  ─────────────────────────────────────────────────────────────────────────────
-# Vérif globale: unit -> (stack up) -> integration -> e2e -> combine coverage -> (stack down)
-# - Crée/active un venv "CI-like" (.venv-ci) et installe les deps (dont psycopg)
-# - Force PYTHONPATH=server pour que "app.*" soit importable
-# - Unit  : SQLite in-memory, coverage stricte (fail-under=60 ici, puis seuil global)
-# - Integ/E2E : stack Docker (db/redis/api/worker), migrations Alembic, tests host
-# - Combine : coverage host + fragments écrits par les containers sous ./server
-# - Utilise *toujours* l'override docker-compose.coverage.yml pour capturer la
-#   couverture côté API/worker.
+# scripts/verify_all.sh
+#  ─────────────────────────────────────────────────────────────────────────────
+# Vérif globale :
+#   1) Unit (host, SQLite) + coverage
+#   2) Stack Docker up (db/redis/api/worker) + migrations Alembic
+#   3) Integration (host, Postgres) + coverage append
+#   4) E2E (host -> API) + coverage append
+#   5) Stop api/worker (flush coverage) + combine (host + fragments containers)
+#   6) Coverage report + xml
+#
+# Notes :
+#   - PYTHONPATH=server pour que "app.*" soit importable
+#   - L'override docker-compose.coverage.yml est toujours activé pour capturer
+#     la couverture côté API/worker (fragments écrits sous ./server)
+#
+# Auth / sécurité :
+#   - /api/v1/health est PUBLIC → aucun header d'auth ne doit être envoyé.
+#   - La variable KEY (API key) est requise uniquement pour les endpoints ingest
+#     (ex: POST /api/v1/ingest/metrics) et autres endpoints protégés par API key.
 #  ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 # --- Config -------------------------------------------------------------------
-: "${API:=http://localhost:8000}"           # endpoint public de l'API
-: "${KEY:=dev-apikey-123}"                  # API key par défaut
+: "${API:=http://localhost:8000}"           # endpoint public de l'API (base URL)
 : "${THRESHOLD:=70}"                        # seuil de couverture finale (report --fail-under)
 : "${BUILD:=0}"                             # BUILD=1 pour docker compose --build
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,10 +41,11 @@ cleanup_coverage() {
   rm -f  "$PROJECT_ROOT/coverage.xml" || true
 }
 
+# Attendre que l'API réponde sur le healthcheck PUBLIC (sans header d'auth)
 wait_api() {
   log "attente de l'API ($API/api/v1/health)…"
   for i in {1..60}; do
-    if curl -fsS -H "X-API-Key: $KEY" "$API/api/v1/health" >/dev/null 2>&1; then
+    if curl -fsS "$API/api/v1/health" >/dev/null 2>&1; then
       log "API ok."
       return 0
     fi
@@ -44,10 +55,15 @@ wait_api() {
   return 1
 }
 
+# Guard explicite : KEY est requise uniquement si on appelle un endpoint protégé par API key
+require_key() {
+  : "${KEY:?Missing KEY env var (API key). Example: KEY=<API_KEY> ./scripts/verify_all.sh}"
+}
+
 # Wrapper docker compose (toujours avec l'override coverage)
 dc() {
-  # on ajoute systématiquement le fichier coverage pour que l’API/worker
-  #      émettent des fichiers .coverage.* dans ./server
+  # On ajoute systématiquement le fichier coverage pour que l’API/worker
+  # émettent des fichiers .coverage.* dans ./server (volume partagé).
   ( cd "$PROJECT_ROOT/docker" && docker compose \
       -f docker-compose.yml \
       -f docker-compose.coverage.yml \
@@ -55,7 +71,12 @@ dc() {
 }
 
 ensure_env_docker() {
-  # prépare .env.docker à la racine et copie dans docker/.env.docker
+  # Prépare .env.docker à la racine et copie dans docker/.env.docker.
+  #
+  # ⚠️ Objectif : rester "CI-like" et éviter les surprises :
+  # - On force un webhook Slack stub (httpbin) si absent
+  # - On réduit ALERT_REMINDER_MINUTES pour accélérer
+  # - On active STUB_SLACK=1
   if [[ ! -f "$PROJECT_ROOT/.env.docker" ]]; then
     if [[ -f "$PROJECT_ROOT/.env.example" ]]; then
       cp "$PROJECT_ROOT/.env.example" "$PROJECT_ROOT/.env.docker"
@@ -63,7 +84,6 @@ ensure_env_docker() {
       echo "ERROR: .env.example introuvable à la racine" >&2
       exit 1
     fi
-    # impose quelques défauts sûrs pour la CI/locale
     awk 'BEGIN{pslack=0; prem=0}
          /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; pslack=1; next}
          /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; prem=1; next}
@@ -136,10 +156,12 @@ done
 # Migrations Alembic dans le conteneur API (chemins typiques de ton projet)
 log "alembic upgrade head (dans le conteneur api)…"
 if ! dc --env-file ../.env.docker run --rm -w /app/server api alembic -c /app/server/alembic.ini upgrade head; then
-  echo "❌ Alembic upgrade failed"; dump_logs_on_error; exit 1
+  echo "❌ Alembic upgrade failed"
+  dump_logs_on_error
+  exit 1
 fi
 
-# Wait API healthy (healthcheck)
+# Wait API healthy (healthcheck PUBLIC)
 wait_api
 
 # 3) INTEGRATION TESTS (host)
@@ -155,8 +177,12 @@ pytest -m "integration" \
   --cov-append --cov-fail-under=0
 
 # 4) E2E TESTS (host → containers)
+# Si tes tests e2e appellent des endpoints ingest (API key),
+# la variable KEY doit être fournie par l'environnement.
 log "pytest E2E (host → API) + coverage append"
 export E2E_STACK_UP=1
+require_key
+
 COVERAGE_FILE=".coverage.host" \
 pytest -m "e2e" \
   --maxfail=1 \

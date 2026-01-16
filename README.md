@@ -52,21 +52,23 @@ docker compose -f docker/docker-compose.yml exec api alembic upgrade head
 
 # 4) Vérifier la santé
 curl -fsS http://localhost:8000/api/v1/health
-```
+````
 
-- **API :** http://localhost:8000  
-- **Swagger UI :** http://localhost:8000/docs  
-- **OpenAPI :** http://localhost:8000/openapi.json
+* **API :** [http://localhost:8000](http://localhost:8000)
+* **Swagger UI :** [http://localhost:8000/docs](http://localhost:8000/docs)
+* **OpenAPI :** [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
 
 ---
 
 ## Fichiers d’environnement
 
 ### `.env.docker` (source de vérité Docker/CI)
-Chargé par `docker/docker-compose.yml` via `env_file: ../.env.docker`.  
+
+Chargé par `docker/docker-compose.yml` via `env_file: ../.env.docker`.
 ✨ **Ne pas** le charger côté hôte (sinon vous tenterez de joindre `db:5432` depuis l’hôte → échec DNS).
 
 ### `.env.integration.local` (overrides host pour pytest)
+
 Utile quand vous lancez des tests **depuis l’hôte**. Exemple minimal :
 
 ```bash
@@ -83,9 +85,10 @@ ENV_FILE=.env.integration.local pytest -m integration
 > Le chargement a lieu **très tôt** (pydantic-settings) pour éviter que l’app fige une mauvaise `DATABASE_URL` lors des imports.
 
 ### `.env` (optionnel, host-only)
+
 À garder pour un usage local "non Docker". Évitez-le dans les workflows d’intégration pour ne pas polluer `DATABASE_URL`.
 
-**Astuce :** `Settings()` (pydantic-settings) lit `ENV_FILE` si présent, sinon `.env` par défaut.  
+**Astuce :** `Settings()` (pydantic-settings) lit `ENV_FILE` si présent, sinon `.env` par défaut.
 Dans Docker, ne définissez pas `ENV_FILE` côté services pour éviter la lecture d’un `.env` de l’hôte monté par erreur.
 
 ---
@@ -131,7 +134,10 @@ make health
 
 ## Jeu de données de dev (seed)
 
-Le dépôt inclut une migration de seed (`0002_seed_dev_data.py`).  
+Le dépôt inclut une migration de seed (`0002_seed_dev_data.py`).
+
+### Seed minimal (exemple)
+
 Injection minimale avec `psql` dans le conteneur `db` :
 
 ```bash
@@ -140,9 +146,10 @@ docker compose -f docker/docker-compose.yml exec -e PGPASSWORD=postgres db psql 
 "INSERT INTO clients (id, name) VALUES ('00000000-0000-0000-0000-000000000001','Dev') ON CONFLICT DO NOTHING;"
 
 # Clé API
+# Remplacez <YOUR_API_KEY> par une vraie clé (générée et stockée côté env/secret manager).
 docker compose -f docker/docker-compose.yml exec -e PGPASSWORD=postgres db psql -U postgres -d monitoring -c \
 "INSERT INTO api_keys (id, client_id, key, name, is_active) VALUES \
-('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','dev-apikey-123','dev', true) \
+('00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000001','<YOUR_API_KEY>','dev', true) \
 ON CONFLICT DO NOTHING;"
 
 # Settings client
@@ -154,7 +161,7 @@ consecutive_failures_threshold, alert_grouping_enabled) VALUES \
 ON CONFLICT (client_id) DO NOTHING;\"
 ```
 
-Clé API de dev utilisée dans les exemples : **`dev-apikey-123`**
+🛈 **Clé API utilisée dans les exemples :** **`<YOUR_API_KEY>`**
 
 ---
 
@@ -170,19 +177,19 @@ curl -s http://localhost:8000/api/v1/health
 **HTTP targets — lister**
 
 ```bash
-curl -s -H "X-API-Key: dev-apikey-123" \
+curl -s -H "X-API-Key: <YOUR_API_KEY>" \
   http://localhost:8000/api/v1/http-targets | jq .
 ```
 
 **HTTP targets — créer**
 
 ```bash
-curl -s -H "Content-Type: application/json" -H "X-API-Key: dev-apikey-123" \
+curl -s -H "Content-Type: application/json" -H "X-API-Key: <YOUR_API_KEY>" \
   -X POST http://localhost:8000/api/v1/http-targets -d '{
     "name": "Httpbin 500 (via API)",
     "url": "https://httpbin.org/status/500",
     "method": "GET",
-    "accepted_status_codes": NULL,
+    "accepted_status_codes": null,
     "timeout_seconds": 10,
     "check_interval_seconds": 60,
     "is_active": true
@@ -190,16 +197,16 @@ curl -s -H "Content-Type: application/json" -H "X-API-Key: dev-apikey-123" \
 # 201 -> {"id":"<uuid>"}
 ```
 
-- **Conflit/idempotence** `409` : pour une URL déjà existante (même client), le serveur renvoie `409` avec `detail.existing_id`.
-- **Validation** `422` : URL non-HTTP(S) → `422` avec message explicite (schéma attendu, validation Pydantic).
+* **Conflit/idempotence** `409` : pour une URL déjà existante (même client), le serveur renvoie `409` avec `detail.existing_id`.
+* **Validation** `422` : URL non-HTTP(S) → `422` avec message explicite (schéma attendu, validation Pydantic).
 
 ---
 
 ## Tâches périodiques (Celery)
 
-- **Évaluation :** 60s  
-- **Heartbeat :** 120s  
-- **HTTP monitoring :** 300s
+* **Évaluation :** 60s
+* **Heartbeat :** 120s
+* **HTTP monitoring :** 300s
 
 Déclencher manuellement une vérification HTTP d’une cible :
 
@@ -218,13 +225,14 @@ Un script est fourni :
 
 ```bash
 chmod +x scripts/smoke_http_targets.sh
-API=http://localhost:8000 KEY=dev-apikey-123 ./scripts/smoke_http_targets.sh
+API=http://localhost:8000 KEY=<YOUR_API_KEY> ./scripts/smoke_http_targets.sh
 ```
 
 Il valide notamment :
-- Deux POST concurrents → un `201` et un `409` (avec `existing_id`)
-- Idempotence d’un POST répété → `409`
-- Validation d’URL → `422`
+
+* Deux POST concurrents → un `201` et un `409` (avec `existing_id`)
+* Idempotence d’un POST répété → `409`
+* Validation d’URL → `422`
 
 🛈 À lancer après que l’API réponde sur `/api/v1/health`. En CI, il est optionnel (non exécuté par défaut).
 
@@ -232,30 +240,35 @@ Il valide notamment :
 
 ## Tests — organisation & alias Makefile
 
-Les tests sont organisés en **unit**, **contract**, **integration** et **e2e**.  
-Par défaut, quand la stack est DOWN, `pytest -q` n’exécute que **unit** (et **contract** traité “unit-like” en SQLite).  
+Les tests sont organisés en **unit**, **contract**, **integration** et **e2e**.
+Par défaut, quand la stack est DOWN, `pytest -q` n’exécute que **unit** (et **contract** traité “unit-like” en SQLite).
 Les dossiers **integration/e2e** sont **skippés** tant que `INTEG_STACK_UP`/`E2E_STACK_UP` ≠ `"1"`.
 
 ### Alias Makefile (ajoutés)
-- **Rapides (stack down)**
+
+* **Rapides (stack down)**
+
   ```bash
   make test-fast
   # équiv. : pytest -q
   ```
 
-- **Intégration**
+* **Intégration**
+
   ```bash
   make test-integ
   # équiv. : INTEG_STACK_UP=1 pytest -q -m integration
   ```
 
-- **E2E**
+* **E2E**
+
   ```bash
   make test-e2e
   # équiv. : E2E_STACK_UP=1 pytest -q -m e2e
   ```
 
-- **Tout (unit + contract + integ + e2e)**
+* **Tout (unit + contract + integ + e2e)**
+
   ```bash
   make test-all
   # équiv. : INTEG_STACK_UP=1 E2E_STACK_UP=1 pytest -q -m "unit or contract or integration or e2e"
@@ -263,12 +276,14 @@ Les dossiers **integration/e2e** sont **skippés** tant que `INTEG_STACK_UP`/`E2
 
 ### Recettes utiles
 
-- **Boucle dev rapide (stack down)**  
+* **Boucle dev rapide (stack down)**
+
   ```bash
   make test-fast
   ```
 
-- **Intégration locale (stack up + DB locale)**  
+* **Intégration locale (stack up + DB locale)**
+
   ```bash
   # Démarrer la stack
   make stack-up
@@ -276,7 +291,8 @@ Les dossiers **integration/e2e** sont **skippés** tant que `INTEG_STACK_UP`/`E2
   make test-integ
   ```
 
-- **E2E**  
+* **E2E**
+
   ```bash
   make stack-up
   make test-e2e
@@ -300,23 +316,24 @@ E2E_STACK_UP=1 make cov-all
 ```
 
 Sorties :
-- `coverage.xml` (CI, Sonar, etc.)
-- `htmlcov/index.html` (rapport HTML)
+
+* `coverage.xml` (CI, Sonar, etc.)
+* `htmlcov/index.html` (rapport HTML)
 
 ---
 
 ## Développement & redémarrages
 
-- **API (FastAPI)** : rebuild/redémarrage si pas de reload auto (`make restart` ou `make rebuild`).
-- **Workers (Celery)** : redémarrer worker si vous modifiez des tâches (`make restart`).
-- **Migrations** : après changement de schéma (`make migrate`).
+* **API (FastAPI)** : rebuild/redémarrage si pas de reload auto (`make restart` ou `make rebuild`).
+* **Workers (Celery)** : redémarrer worker si vous modifiez des tâches (`make restart`).
+* **Migrations** : après changement de schéma (`make migrate`).
 
 ---
 
 ## Dépannage rapide
 
-`psycopg OperationalError: Errno -2 Name or service not known`  
-→ Vous utilisez `@db:5432` depuis l’hôte : `db` n’existe que dans le réseau Docker.  
+`psycopg OperationalError: Errno -2 Name or service not known`
+→ Vous utilisez `@db:5432` depuis l’hôte : `db` n’existe que dans le réseau Docker.
 ✅ Pour les tests hôte, utilisez `@localhost:5432` via `.env.integration.local` et `ENV_FILE=.env.integration.local`.
 
 Vérifs utiles :
@@ -329,21 +346,22 @@ nc -zv localhost 5432
 curl -fsS http://localhost:8000/api/v1/health
 ```
 
-- `401 Unauthorized` : header `X-API-Key` manquant/incorrect (utiliser `dev-apikey-123` si seedé).
-- `404` : vérifier la route (`/api/v1/http-targets` avec tiret).
-- `422` : données invalides (Pydantic) → lire le détail JSON.
-- Slack non configuré : en dev vous pouvez activer `STUB_SLACK=1` ou pointer vers `http://httpbin:80/status/204`.
-- Compose ne démarre pas : vérifier `.env.docker` à la racine (copie depuis `.env.example`).
+* `401 Unauthorized` : header `X-API-Key` manquant/incorrect (**vous devez fournir une vraie clé**, ex: `X-API-Key: <YOUR_API_KEY>`).
+* `404` : vérifier la route (`/api/v1/http-targets` avec tiret).
+* `422` : données invalides (Pydantic) → lire le détail JSON.
+* Slack non configuré : en dev vous pouvez activer `STUB_SLACK=1` ou pointer vers `http://httpbin:80/status/204`.
+* Compose ne démarre pas : vérifier `.env.docker` à la racine (copie depuis `.env.example`).
 
 ---
 
 ## Notes CI (résumé)
 
 La CI :
-- prépare `.env.docker`
-- démarre la stack via `docker compose` (avec `--env-file ../.env.docker` si besoin)
-- attend la DB, applique les migrations Alembic dans le conteneur `api`
-- exécute : unit (host-only) → integration (cov-all) → e2e
+
+* prépare `.env.docker`
+* démarre la stack via `docker compose` (avec `--env-file ../.env.docker` si besoin)
+* attend la DB, applique les migrations Alembic dans le conteneur `api`
+* exécute : unit (host-only) → integration (cov-all) → e2e
 
 🛈 Le script `scripts/smoke_http_targets.sh` est optionnel et non exécuté par défaut (peut être ajouté après les E2E si besoin).
 
@@ -355,7 +373,7 @@ La CI :
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/ingest/metrics \
-  -H 'X-API-Key: dev-apikey-123' \
+  -H 'X-API-Key: <YOUR_API_KEY>' \
   -H 'X-Ingest-Id: 11111111-1111-1111-1111-111111111111' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -370,20 +388,77 @@ curl -X POST http://localhost:8000/api/v1/ingest/metrics \
 ```
 
 **Périodicités par défaut**
-- **Évaluation :** 60s
-- **Heartbeat :** 120s
-- **HTTP monitoring :** 300s
+
+* **Évaluation :** 60s
+* **Heartbeat :** 120s
+* **HTTP monitoring :** 300s
+
+---
 
 ## HTTPS en développement (local)
 
 Le projet est conçu pour être utilisé **exclusivement en HTTPS**, y compris en environnement de développement.
 
 Nous utilisons :
-- **Nginx** comme reverse-proxy
-- **mkcert** pour générer des certificats TLS locaux
-- un domaine local : `monitoring.local`
+
+* **Nginx** comme reverse-proxy
+* **mkcert** pour générer des certificats TLS locaux
+* un domaine local : `monitoring.local`
+
+## Protection des routes
+
+python - <<'PY'
+import re, pathlib
+
+base = pathlib.Path("server/app/api/v1/endpoints")
+dep_re = re.compile(r"Depends\(\s*(api_key_auth|get_current_user)\b")
+route_re = re.compile(r'@router\.(get|post|put|patch|delete|head|options)\("([^"]*)"')
+def_re = re.compile(r"(?:async\s+def|def)\s+([a-zA-Z0-9_]+)\(")
+
+for path in sorted(base.glob("*.py")):
+    lines = path.read_text(encoding="utf-8").splitlines()
+    i = 0
+    while i < len(lines):
+        m = route_re.search(lines[i])
+        if not m:
+            i += 1
+            continue
+        method, route = m.group(1).upper(), m.group(2)
+        prot = None
+        fn = None
+        j = i + 1
+        while j < len(lines) and j < i + 120:
+            if fn is None:
+                dm = def_re.search(lines[j])
+                if dm:
+                    fn = dm.group(1)
+PY      i = jrint(f"{method:6} /api/v1{route:40} {prot:10} {path.name}:{fn or '?'}")"
+
+### Résultat 
+
+GET    /api/v1                                         JWT_COOKIE alerts.py:list_alerts
+GET    /api/v1/me                                      JWT_COOKIE auth.py:me
+GET    /api/v1/summary                                 JWT_COOKIE dashboard.py:summary
+GET    /api/v1                                         JWT_COOKIE http_targets.py:list_targets
+POST   /api/v1                                         JWT_COOKIE http_targets.py:create_target
+PUT    /api/v1/{target_id}                             JWT_COOKIE http_targets.py:update_target
+DELETE /api/v1/{target_id}                             JWT_COOKIE http_targets.py:delete_target
+GET    /api/v1                                         JWT_COOKIE incidents.py:list_incidents
+POST   /api/v1/ingest/metrics                          API_KEY    ingest.py:post_metrics
+GET    /api/v1                                         JWT_COOKIE machines.py:list_machines
+GET    /api/v1/{machine_id}/detail                     JWT_COOKIE machines.py:get_machine_detail
+GET    /api/v1                                         JWT_COOKIE metrics.py:list_metrics_root
+GET    /api/v1/{machine_id}                            JWT_COOKIE metrics.py:list_metrics_by_machine
+POST   /api/v1/{metric_instance_id}/thresholds/default JWT_COOKIE metrics.py:upsert_default_threshold
+PATCH  /api/v1/{metric_instance_id}/alerting           JWT_COOKIE metrics.py:toggle_alerting
+PATCH  /api/v1/{metric_instance_id}/pause              JWT_COOKIE metrics.py:toggle_pause_metric
+GET    /api/v1                                         JWT_COOKIE notifications.py:list_notifications
+GET    /api/v1                                         JWT_COOKIE settings.py:get_settings
+PUT    /api/v1                                         JWT_COOKIE settings.py:update_settings
+
 
 ➡️ Voir la documentation complète :
 📄 `docs/dev-https.md`
 
 Bon run ! 🎯
+

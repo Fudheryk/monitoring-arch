@@ -51,7 +51,6 @@ DB_USER = "postgres"
 DB_NAME = "monitoring"
 
 API_BASE = "http://localhost:8000"
-API_KEY = "dev-apikey-123"
 CLIENT_NAME = "Dev"
 
 HOSTNAME = "debian-dev"
@@ -61,6 +60,10 @@ NO_DATA_WAIT_SECONDS = 320
 CELERY_LAG_SECONDS = 60
 
 RUN_SALT = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
+
+INGEST_API_KEY = os.environ.get("INGEST_API_KEY")
+if not INGEST_API_KEY:
+    raise SystemExit("Missing env INGEST_API_KEY (required for /api/v1/ingest/metrics)")
 
 # =========================
 # SUIVI DES CHECKS / SCÉNARIOS
@@ -698,14 +701,13 @@ def ingest_metrics(ingest_id: str, metrics: List[dict]) -> None:
     headers = {
         "Content-Type": "application/json",
         "X-Ingest-Id": f"{RUN_SALT}:{ingest_id}",
-        "X-API-Key": API_KEY,
+        "X-API-Key": INGEST_API_KEY,
     }
     payload = {
         "metadata": {
             "generator": "scenario-matrix-script",
             "version": "0.1",
-            "schema_version": "1.0",
-            "key": API_KEY,
+            "schema_version": "1.0"
         },
         "machine": {
             "hostname": HOSTNAME,

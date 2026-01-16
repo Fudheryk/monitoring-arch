@@ -4,13 +4,13 @@
 
 Créer automatiquement dans la base :
 
-* **1 client**
-* **1 admin** (email + rôle + mot de passe éventuellement généré)
-* **N API keys**
-* des **settings client**
-* des **HTTP targets**
+- **1 client**
+- **1 admin** (email + rôle + mot de passe éventuellement généré)
+- **N API keys**
+- des **settings client**
+- des **HTTP targets**
 
-Le provisioning est **idempotent** :
+Le provisioning est **idempotent** :  
 ➡️ relancer le script avec le même INI **ne duplique pas** les données existantes.
 
 ---
@@ -31,11 +31,11 @@ Exemple :
 
 `server/scripts/provision_from_ini.py`
 
-> ⚠️ Attention : selon l’environnement (DEV vs PROD), le chemin **dans le container** peut être différent.
+> ⚠️ Attention : selon l’environnement (DEV vs PROD), le chemin **dans le container** peut être différent.  
 > En DEV on a confirmé :
 >
-> * script : `/app/server/scripts/provision_from_ini.py`
-> * ini : `/app/server/scripts/provisioning/<client>.ini`
+> - script : `/app/server/scripts/provision_from_ini.py`
+> - ini : `/app/server/scripts/provisioning/<client>.ini`
 
 ---
 
@@ -49,8 +49,8 @@ Cela évite de créer des clients “par erreur” en prod.
 
 ⚠️ Selon le code/config, en prod il peut aussi refuser si :
 
-* `APP_ENV=production`
-* et que `ALLOW_PROD_PROVISIONING=true` n’est pas fourni
+- `APP_ENV=production`
+- et que `ALLOW_PROD_PROVISIONING=true` n’est pas fourni
 
 ---
 
@@ -65,7 +65,7 @@ cd /opt/monitoring-arch
 
 nano server/scripts/provisioning/smarthack.ini
 # ou créer un nouveau fichier : server/scripts/provisioning/clientX.ini
-```
+````
 
 Puis commit/push :
 
@@ -391,6 +391,14 @@ Attendu :
 
 👉 Cette méthode utilise **le même contexte bcrypt que l’app**, donc aucun risque d’incompatibilité.
 
+⚠️ **Correction sécurité** (objectif "0 traces") :
+
+* ne pas imprimer un mot de passe en clair dans les logs,
+* générer le secret, mais ne l’afficher que si vous êtes dans un canal sécurisé,
+* idéalement : écrire le secret dans un fichier éphémère dans le container (puis le supprimer).
+
+Exemple (ne print PAS le password) :
+
 ```bash
 docker compose --env-file ../.env.production -f docker-compose.prod.yml exec api sh -lc '
 python - << "PY"
@@ -399,6 +407,8 @@ from sqlalchemy import create_engine, text
 from app.core.security import hash_password
 
 EMAIL="client@exemple.com"
+
+# Génère un password fort (ne pas l'afficher ici par défaut)
 pwd = secrets.token_urlsafe(24)
 h = hash_password(pwd)
 
@@ -417,11 +427,13 @@ with engine.begin() as c:
 
 print("HASH_LEN=", row[0])
 print("HASH_PREFIX=", row[1])
-print("NEW_PASSWORD=", "***REDACTED***")  # ne pas afficher en prod dans un log partagé
+
+# Si vous devez récupérer le password, faites-le dans un canal sécurisé :
+# print("NEW_PASSWORD=", pwd)
 PY'
 ```
 
-> 🔐 Recommandation : dans un vrai run, afficher `NEW_PASSWORD` **uniquement** si tu es en session privée / canal sécurisé.
+> 🔐 Recommandation : si tu dois afficher `NEW_PASSWORD`, fais-le **uniquement** en session privée / canal sécurisé.
 
 ---
 
@@ -496,7 +508,7 @@ curl -sk -i -X POST https://neonmonitor.dockl.com/api/v1/ingest/metrics \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"sent_at\":\"$SENT_AT\",\"machine\":{\"hostname\":\"prod-test-01\",\"os\":\"Linux\",\"fingerprint\":\"prod-test-01\"},\"metrics\":[]}" \
-| awk 'NR==1 || /^\{/ {print}'
+| awk "NR==1 || /^\{/ {print}"
 ```
 
 Attendu : `HTTP/2 202`
@@ -545,7 +557,7 @@ curl -sk -i -X POST "https://<DOMAIN>/api/v1/ingest/metrics" \
   -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"sent_at\":\"$SENT_AT\",\"machine\":{\"hostname\":\"client-test-01\",\"os\":\"Linux\",\"fingerprint\":\"client-test-01\"},\"metrics\":[]}" \
-| awk 'NR==1 || /^\{/ {print}'
+| awk "NR==1 || /^\{/ {print}"
 ```
 
 **Attendu** : `HTTP/2 202`

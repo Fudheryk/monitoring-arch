@@ -52,7 +52,6 @@ SHELL := /bin/bash
 
 # Endpoint/API key pour les tests "host"
 API ?= http://localhost:8000
-KEY ?= dev-apikey-123
 
 # Pytest & coverage CLIs
 PYTEST ?= pytest

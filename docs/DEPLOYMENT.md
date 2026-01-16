@@ -72,9 +72,6 @@ openssl rand -base64 24
 
 # Ajouter votre mot de passe GMX
 SMTP_PASSWORD=VotreMotDePasseGMX
-
-# Ajouter votre API_KEY
-API_KEY=$(openssl rand -hex 32)
 ```
 
 ### 4. Configuration des Secrets Docker Hub
