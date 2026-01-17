@@ -43,8 +43,7 @@ services:
     command: ["alembic", "-c", "/app/server/alembic.ini", "upgrade", "head"]
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
     depends_on:
       db:
@@ -64,8 +63,7 @@ services:
     command: ["api"]
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
       PROXY_HEADERS: "1"
       FORWARDED_ALLOW_IPS: "127.0.0.1,172.30.0.0/16"
     depends_on:
@@ -98,8 +96,7 @@ services:
     command: ["celery", "-A", "app.workers.celery_app.celery", "worker", "-l", "info"]
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
     depends_on:
       db:
         condition: service_healthy
@@ -140,8 +137,7 @@ services:
       - /tmp/celerybeat.pid
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
     depends_on:
       db:
         condition: service_healthy
