@@ -42,6 +42,7 @@ services:
     container_name: monitoring-migrate
     command: ["alembic", "-c", "/app/server/alembic.ini", "upgrade", "head"]
     environment:
+      DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
@@ -62,6 +63,7 @@ services:
     container_name: monitoring-api
     command: ["api"]
     environment:
+      DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       PROXY_HEADERS: "1"
@@ -94,6 +96,10 @@ services:
     <<: *app-common
     container_name: monitoring-worker
     command: ["celery", "-A", "app.workers.celery_app.celery", "worker", "-l", "info"]
+    environment:
+      DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     depends_on:
       db:
         condition: service_healthy
@@ -132,6 +138,10 @@ services:
       - /tmp/celerybeat-schedule
       - --pidfile
       - /tmp/celerybeat.pid
+    environment:
+      DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     depends_on:
       db:
         condition: service_healthy
