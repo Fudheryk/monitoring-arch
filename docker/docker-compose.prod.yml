@@ -61,6 +61,11 @@ services:
     <<: *app-common
     container_name: monitoring-api
     command: ["api"]
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      PROXY_HEADERS: "1"
+      FORWARDED_ALLOW_IPS: "127.0.0.1,172.30.0.0/16"
     depends_on:
       db:
         condition: service_healthy
@@ -82,10 +87,6 @@ services:
           memory: 180M
         reservations:
           memory: 60M
-    environment:
-      PROXY_HEADERS: "1"
-      FORWARDED_ALLOW_IPS: "127.0.0.1,172.30.0.0/16"
-
   # ---------------------------------------------------------------------------
   # Celery Worker
   # ---------------------------------------------------------------------------
