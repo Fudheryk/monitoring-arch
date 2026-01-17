@@ -27,16 +27,12 @@ if config.config_file_name and Path(config.config_file_name).exists():
 else:
     logging.basicConfig(level=logging.INFO)
 
-# Database URL configuration
-db_url = os.getenv("DATABASE_URL")
-if db_url:
-    config.set_main_option("sqlalchemy.url", db_url)
-
 target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    url = config.get_main_option("sqlalchemy.url")
+    from app.core.config import settings
+    url = settings.DATABASE_URL
     context.configure(
         url=url,
         target_metadata=target_metadata,
