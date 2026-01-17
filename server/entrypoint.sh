@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# =============================================================================
+# ENTRYPOINT - Monitoring API
+# =============================================================================
 # Starts:
 #  - API (default or "api")
-#  - or any other command (celery worker/beat, migrations, shell…)
+#  - Celery worker/beat
+#  - Any other command (migrations, shell, etc.)
 #
-# Extras:
-#  - Alembic migrations before API
-#  - API_COVERAGE=1 → uvicorn under coverage (writes /app/server/.coverage.api)
-#  - WORKER_COVERAGE=1 → celery worker under coverage (→ /app/server/.coverage.worker)
-#  - BEAT_COVERAGE=1 → celery beat under coverage (→ /app/server/.coverage.beat)
-#  - If "coverage" not installed → graceful fallback to plain commands.
+# Features:
+#  - Auto-detects DB schema state and runs Alembic migrations
+#  - Coverage support (API_COVERAGE=1, WORKER_COVERAGE=1, BEAT_COVERAGE=1)
+#  - Proxy headers support for Uvicorn (PROXY_HEADERS=1)
+#
+# IMPORTANT FIX:
+#  - Uses settings.DATABASE_URL (built from POSTGRES_PASSWORD) instead of
+#    raw DATABASE_URL env var which doesn't exist in .env.production
+# =============================================================================
 
 log() { echo "[$(date -u +'%H:%M:%S')] $*"; }
 
@@ -34,131 +41,199 @@ _run_with_coverage() {
 run_api() {
   log "Checking DB schema state…"
 
-  # Décide le chemin: 10=has_alembic, 20=fresh, 30=has_schema_no_alembic, 40=incoherent
+  # =========================================================================
+  # DB Schema Detection
+  # =========================================================================
+  # Détecte l'état du schéma PostgreSQL:
+  #   10 = alembic_version présent → alembic upgrade head
+  #   20 = base vide (aucune table app) → alembic upgrade head
+  #   30 = schéma complet mais sans alembic_version → alembic stamp + upgrade
+  #   40 = état incohérent → erreur (intervention manuelle requise)
+  #
+  # IMPORTANT:
+  # - Utilise settings.DATABASE_URL (construit depuis POSTGRES_PASSWORD)
+  # - La variable DATABASE_URL brute n'existe PAS dans .env.production
+  # =========================================================================
+  
   state=$(python - <<'PY'
-import os, sys
+import sys
+from app.core.config import settings
 from sqlalchemy import create_engine, inspect
 
-url = os.environ.get("DATABASE_URL")
-if not url:
-    print("no-db-url"); sys.exit(99)
-
-eng = create_engine(url)
+# ✅ Utilise settings.DATABASE_URL (construit depuis POSTGRES_PASSWORD)
+eng = create_engine(settings.DATABASE_URL)
 insp = inspect(eng)
 
 tables = set(insp.get_table_names(schema="public"))
 have_alembic = "alembic_version" in tables
 
-# Ensemble minimal des tables "app" (ajuste si nécessaire)
+# Liste complète des tables applicatives attendues
+# NOTE: Correspond aux modèles SQLAlchemy dans app/infrastructure/persistence/database/models/
 app_tables = {
-    "clients", "api_keys", "machines", "metric_definitions", "metric_instances",
-    "samples", "thresholds", "alerts", "incidents", "http_targets",
-    "ingest_events", "outbox_events", "notification_log", "client_settings",
-    "users", "client_incident_counter", "threshold_templates"
+    "clients", 
+    "api_keys", 
+    "machines", 
+    "metric_definitions", 
+    "metric_instances",
+    "samples", 
+    "thresholds",  # ✅ Renommé de thresholds_new
+    "alerts", 
+    "incidents", 
+    "http_targets",
+    "ingest_events", 
+    "outbox_events", 
+    "notification_log", 
+    "client_settings",
+    "users", 
+    "client_incident_counter", 
+    "threshold_templates"
 }
 
+# Détermination de l'état
 if have_alembic:
-    code = 10              # Schéma versionné → upgrade
+    # Schéma versionné Alembic → migration normale
+    code = 10
 elif tables.isdisjoint(app_tables):
-    code = 20              # Base “vide” (pas de tables app) → upgrade
+    # Base "vide" (aucune table app) → migration initiale
+    code = 20
 elif app_tables.issubset(tables):
-    code = 30              # Schéma complet mais sans alembic_version → stamp head, puis upgrade
+    # Schéma complet mais sans alembic_version → stamp puis upgrade
+    code = 30
 else:
-    code = 40              # État incohérent → stop (intervention humaine)
+    # État incohérent (tables partielles) → arrêt
+    code = 40
+
 print(code)
 sys.exit(0)
 PY
 )
 
+  # =========================================================================
+  # Actions selon l'état détecté
+  # =========================================================================
+  
   case "$state" in
     10)
-      log "alembic_version present → alembic upgrade head"
+      log "✅ alembic_version présent → alembic upgrade head"
       alembic upgrade head
       ;;
     20)
-      log "fresh DB (no app tables) → alembic upgrade head"
+      log "✅ Fresh DB (no app tables) → alembic upgrade head"
       alembic upgrade head
       ;;
     30)
-      log "schema present but no alembic_version → alembic stamp head + upgrade head"
+      log "⚠️  Schema présent mais sans alembic_version → alembic stamp head + upgrade"
       alembic stamp head
       alembic upgrade head
       ;;
     40)
-      log "Inconsistent DB schema detected → refusing to auto-heal. Please fix manually."
+      log "❌ Inconsistent DB schema detected → refusing to auto-heal."
+      log "   Please fix manually or drop/recreate the database."
       exit 1
       ;;
     *)
-      log "Unexpected state from checker: $state"
+      log "❌ Unexpected state from schema checker: $state"
       exit 1
       ;;
   esac
 
-  # -------------------------------------------------------------------
-  # Uvicorn options for reverse proxy (nginx)
-  # - PROXY_HEADERS=1 -> add --proxy-headers
-  # - FORWARDED_ALLOW_IPS="127.0.0.1,172.30.0.0/16" (prod) or "*" (dev)
-  # -------------------------------------------------------------------
+  # =========================================================================
+  # Uvicorn Configuration
+  # =========================================================================
+  # Options pour reverse proxy (nginx):
+  # - PROXY_HEADERS=1 → ajoute --proxy-headers
+  # - FORWARDED_ALLOW_IPS → IPs autorisées (ex: "127.0.0.1,172.30.0.0/16")
+  #   Default: 127.0.0.1 si non fourni
+  # =========================================================================
+  
   UVICORN_EXTRA_ARGS=()
+  
   if [[ "${PROXY_HEADERS:-0}" == "1" ]]; then
     UVICORN_EXTRA_ARGS+=(--proxy-headers)
-    # Default: trust only localhost if not provided
     UVICORN_EXTRA_ARGS+=(--forwarded-allow-ips "${FORWARDED_ALLOW_IPS:-127.0.0.1}")
+    log "🔧 Proxy headers enabled: forwarded-allow-ips=${FORWARDED_ALLOW_IPS:-127.0.0.1}"
   fi
 
-  # Démarrage Uvicorn (inchangé)
+  # =========================================================================
+  # Démarrage Uvicorn (avec ou sans coverage)
+  # =========================================================================
+  
   if [[ "${API_COVERAGE:-0}" == "1" ]] && _have_coverage; then
-    log "API_COVERAGE=1 → running uvicorn under coverage"
+    log "📊 API_COVERAGE=1 → running uvicorn under coverage"
     cd /app/server
-    _run_with_coverage "/app/server/.coverage.api" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 "${UVICORN_EXTRA_ARGS[@]}"
+    _run_with_coverage "/app/server/.coverage.api" \
+      -m uvicorn app.main:app \
+      --host 0.0.0.0 \
+      --port 8000 \
+      "${UVICORN_EXTRA_ARGS[@]}"
   else
-    [[ "${API_COVERAGE:-0}" == "1" ]] && log "coverage not found → starting uvicorn normally"
-    log "Starting uvicorn…"
-    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 "${UVICORN_EXTRA_ARGS[@]}"
+    [[ "${API_COVERAGE:-0}" == "1" ]] && log "⚠️  coverage not found → starting uvicorn normally"
+    log "🚀 Starting uvicorn (API)..."
+    exec uvicorn app.main:app \
+      --host 0.0.0.0 \
+      --port 8000 \
+      "${UVICORN_EXTRA_ARGS[@]}"
   fi
 }
 
-
 run_celery_like() {
-  # Wrap celery worker/beat in coverage when requested
-  # Example invocations reaching here:
-  #   celery -A app.workers.celery_app.celery worker ...
-  #   celery -A app.workers.celery_app.celery beat ...
+  # =========================================================================
+  # Celery Worker / Beat
+  # =========================================================================
+  # Wrap celery worker/beat in coverage when requested:
+  # - WORKER_COVERAGE=1 → celery worker under coverage
+  # - BEAT_COVERAGE=1 → celery beat under coverage
+  #
+  # Example invocations:
+  #   celery -A app.workers.celery_app.celery worker -l info
+  #   celery -A app.workers.celery_app.celery beat -l info
+  # =========================================================================
+  
   local sub="${1:-}"
   shift || true
 
   if [[ "${sub}" == "worker" ]]; then
     if [[ "${WORKER_COVERAGE:-0}" == "1" ]] && _have_coverage; then
-      log "WORKER_COVERAGE=1 → celery worker under coverage"
-      _run_with_coverage "/app/server/.coverage.worker" -m celery -A app.workers.celery_app.celery worker "$@"
+      log "📊 WORKER_COVERAGE=1 → celery worker under coverage"
+      _run_with_coverage "/app/server/.coverage.worker" \
+        -m celery -A app.workers.celery_app.celery worker "$@"
     else
-      [[ "${WORKER_COVERAGE:-0}" == "1" ]] && log "coverage not found → celery worker normally"
+      [[ "${WORKER_COVERAGE:-0}" == "1" ]] && log "⚠️  coverage not found → celery worker normally"
+      log "🚀 Starting celery worker..."
       exec celery -A app.workers.celery_app.celery worker "$@"
     fi
+    
   elif [[ "${sub}" == "beat" ]]; then
     if [[ "${BEAT_COVERAGE:-0}" == "1" ]] && _have_coverage; then
-      log "BEAT_COVERAGE=1 → celery beat under coverage"
-      _run_with_coverage "/app/server/.coverage.beat" -m celery -A app.workers.celery_app.celery beat "$@"
+      log "📊 BEAT_COVERAGE=1 → celery beat under coverage"
+      _run_with_coverage "/app/server/.coverage.beat" \
+        -m celery -A app.workers.celery_app.celery beat "$@"
     else
-      [[ "${BEAT_COVERAGE:-0}" == "1" ]] && log "coverage not found → celery beat normally"
+      [[ "${BEAT_COVERAGE:-0}" == "1" ]] && log "⚠️  coverage not found → celery beat normally"
+      log "🚀 Starting celery beat..."
       exec celery -A app.workers.celery_app.celery beat "$@"
     fi
+    
   else
-    # Not worker/beat → just exec celery with whatever args
+    # Autres commandes celery (inspect, etc.)
     exec celery "${sub}" "$@"
   fi
 }
 
-# ─────────────────────────────────────────────────────────────
+# =============================================================================
+# MAIN ENTRYPOINT LOGIC
+# =============================================================================
 
 if [[ $# -eq 0 || "${1:-}" == "api" ]]; then
+  # Pas d'argument ou "api" explicite → démarrer l'API
   run_api
 else
   if [[ "${1:-}" == "celery" ]]; then
+    # Commande celery
     shift
     run_celery_like "$@"
   else
-    # Any other command
+    # Toute autre commande (shell, migrations manuelles, etc.)
     exec "$@"
   fi
 fi
