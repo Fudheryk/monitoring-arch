@@ -300,26 +300,6 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
-    command: >
-      sh -c "
-      # Créer le dossier SSL s'il n'existe pas
-      mkdir -p /etc/nginx/ssl &&
-      
-      # Générer un faux certificat auto-signé pour le bloc catch-all
-      # CN=invalid.local - nom quelconque, pas utilisé pour la validation
-      # -nodes : pas de mot de passe pour démarrer automatiquement
-      # -days 365 : valide 1 an
-      openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout /etc/nginx/ssl/fake.key \
-        -out /etc/nginx/ssl/fake.cert \
-        -subj '/CN=invalid.local' 2>/dev/null &&
-      
-      # Vérifier la syntaxe de la configuration Nginx
-      nginx -t &&
-      
-      # Démarrer Nginx en premier plan
-      exec nginx -g 'daemon off;'
-      "
     deploy:
       resources:
         limits:
