@@ -178,12 +178,6 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: monitoring
-      # ↓ AJOUTÉ: Optimisation paramètres pour dev (logs + performance)
-      POSTGRES_SHARED_BUFFERS: 256MB
-      POSTGRES_EFFECTIVE_CACHE_SIZE: 1GB
-      POSTGRES_WORK_MEM: 16MB
-      POSTGRES_MAINTENANCE_WORK_MEM: 128MB
-      POSTGRES_MAX_CONNECTIONS: 100
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d monitoring"]
       interval: 5s
@@ -198,7 +192,6 @@ services:
       resources:
         limits:
           memory: 1g
-    # ↓ AJOUTÉ: Sécurité (même en dev)
     security_opt:
       - no-new-privileges:true
 
@@ -211,7 +204,6 @@ services:
     # Pas de persistence en dev (gain performance + pas de pollution disque)
     command: redis-server --save "" --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
-      # ↓ CORRIGÉ: Ajout timeout et amélioration robustesse
       test: ["CMD", "sh", "-c", "redis-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
@@ -223,7 +215,6 @@ services:
       resources:
         limits:
           memory: 512M
-    # ↓ AJOUTÉ: Sécurité
     security_opt:
       - no-new-privileges:true
 
@@ -235,7 +226,6 @@ services:
       context: ../webapp
       dockerfile: Dockerfile.dev
     container_name: monitoring-web-dev
-    # ↓ CORRIGÉ: Cohérence avec structure projet
     working_dir: /app/webapp
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000", "--reload"]
     environment:
@@ -249,7 +239,6 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      # ✅ CORRIGÉ: wget avec --method=GET au lieu de --spider (qui utilise HEAD)
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --timeout=3 -O /dev/null http://localhost:3000/_health || exit 1"]
       interval: 10s
       timeout: 5s
@@ -260,7 +249,6 @@ services:
       resources:
         limits:
           memory: 512M
-    # ↓ AJOUTÉ: Sécurité
     security_opt:
       - no-new-privileges:true
 
@@ -281,7 +269,6 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
-    # ↓ AJOUTÉ: Healthcheck nginx
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:80/health || exit 1"]
       interval: 30s
@@ -293,7 +280,6 @@ services:
       resources:
         limits:
           memory: 128M
-    # ↓ AJOUTÉ: Sécurité
     security_opt:
       - no-new-privileges:true
 
@@ -333,7 +319,6 @@ services:
       resources:
         limits:
           memory: 128M
-    # ↓ AJOUTÉ: Healthcheck MailHog
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8025 || exit 1"]
       interval: 30s
