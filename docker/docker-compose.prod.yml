@@ -75,9 +75,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 250M
+          memory: 180M
         reservations:
-          memory: 150M
+          memory: 60M
     environment:
       PROXY_HEADERS: "1"
       FORWARDED_ALLOW_IPS: "127.0.0.1,172.30.0.0/16"
@@ -106,9 +106,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 350M
+          memory: 200M
         reservations:
-          memory: 180M
+          memory: 100M
 
   # ---------------------------------------------------------------------------
   # Celery Beat Scheduler
@@ -189,9 +189,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 300M
-        reservations:
           memory: 200M
+        reservations:
+          memory: 100M
 
   # ---------------------------------------------------------------------------
   # Redis
@@ -248,6 +248,8 @@ services:
       LOGIN_PATH: "/login"
       PUBLIC_PATHS: "/login,/static,/_health,/health"
       LOG_LEVEL: INFO
+      NODE_OPTIONS: "--max-old-space-size=300"
+      NEXT_TELEMETRY_DISABLED: "1"
     depends_on:
       api:
         condition: service_healthy
@@ -257,7 +259,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    # ↓ AJOUTÉ: Sécurité
     security_opt:
       - no-new-privileges:true
     restart: always
@@ -271,9 +272,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 150M
+          memory: 350M
         reservations:
-          memory: 80M
+          memory: 260M
 
   # ---------------------------------------------------------------------------
   # Nginx Reverse Proxy
@@ -288,12 +289,13 @@ services:
       - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/nginx/certs:ro
       - certbot_data:/var/www/certbot:ro
+      - ./ssl/fake.cert:/etc/nginx/ssl/fake.cert:ro
+      - ./ssl/fake.key:/etc/nginx/ssl/fake.key:ro
     depends_on:
       web:
         condition: service_healthy
       api:
         condition: service_healthy
-    # ↓ AJOUTÉ: Sécurité
     security_opt:
       - no-new-privileges:true
     restart: always
@@ -304,6 +306,26 @@ services:
       options:
         max-size: "5m"
         max-file: "2"
+    command: >  # ← AJOUT: Commande de démarrage qui génère le faux certificat
+      sh -c "
+      # Créer le dossier SSL s'il n'existe pas
+      mkdir -p /etc/nginx/ssl &&
+      
+      # Générer un faux certificat auto-signé pour le bloc catch-all
+      # CN=invalid.local - nom quelconque, pas utilisé pour la validation
+      # -nodes : pas de mot de passe pour démarrer automatiquement
+      # -days 365 : valide 1 an
+      openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /etc/nginx/ssl/fake.key \
+        -out /etc/nginx/ssl/fake.cert \
+        -subj '/CN=invalid.local' 2>/dev/null &&
+      
+      # Vérifier la syntaxe de la configuration Nginx
+      nginx -t &&
+      
+      # Démarrer Nginx en premier plan
+      exec nginx -g 'daemon off;'
+      "
     deploy:
       resources:
         limits:
@@ -337,6 +359,12 @@ services:
     # ↓ AJOUTÉ: Sécurité
     security_opt:
       - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 30M
+        reservations:
+          memory: 20M
 
 # =============================================================================
 # Volumes
