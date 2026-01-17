@@ -144,7 +144,6 @@ class Settings(BaseSettings):
         case_sensitive=True,
         # Charger automatiquement depuis .env si présent
         env_file=".env",
-        env_file_encoding="utf-8",
         extra="ignore",  # Ignorer les variables d'env non définies
     )
     
