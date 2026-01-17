@@ -4,7 +4,7 @@ server/app/application/services/baseline_service.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Initialisation "baseline" + seuils auto lors du premier passage.
 
-Version refactorisée pour MetricInstance + ThresholdNew + ThresholdTemplate.
+Version refactorisée pour MetricInstance + Threshold + ThresholdTemplate.
 
 Ordre logique appliqué :
 
@@ -12,7 +12,7 @@ Ordre logique appliqué :
 2) On récupère les MetricInstance existantes (créées par process_samples)
 3) On applique les métadonnées du catalogue (metric_definitions)
 4) → SI des ThresholdTemplate existent pour cette métrique :
-        - création automatique des ThresholdNew basés sur les templates
+        - création automatique des Threshold basés sur les templates
         - activation de is_alerting_enabled
         - ignore totalement percent-like
 5) → SINON pas de template :
@@ -33,7 +33,7 @@ from app.core.config import settings
 from app.infrastructure.persistence.database.session import open_session
 from app.infrastructure.persistence.database.models.metric_instance import MetricInstance
 from app.infrastructure.persistence.database.models.metric_definitions import MetricDefinitions
-from app.infrastructure.persistence.database.models.threshold_new import ThresholdNew
+from app.infrastructure.persistence.database.models.threshold import Threshold
 from app.infrastructure.persistence.database.models.threshold_template import ThresholdTemplate
 from app.infrastructure.persistence.database.models.machine import Machine
 
@@ -227,7 +227,7 @@ def init_if_first_seen(
     metrics_inputs: Iterable[Any],
 ) -> None:
     """
-    Version MetricInstance + ThresholdNew + ThresholdTemplate.
+    Version MetricInstance + Threshold + ThresholdTemplate.
 
     Règles d'or :
 
@@ -326,17 +326,17 @@ def init_if_first_seen(
 
                 # 6.3) Si on a des templates, ils ont priorité ABSOLUE
                 if use_templates:
-                    # On regarde si des ThresholdNew existent déjà pour cette instance
+                    # On regarde si des Threshold existent déjà pour cette instance
                     existing_count = session.scalar(
                         select(func.count())
-                        .select_from(ThresholdNew)
-                        .where(ThresholdNew.metric_instance_id == inst.id)
+                        .select_from(Threshold)
+                        .where(Threshold.metric_instance_id == inst.id)
                     ) or 0
 
                     if existing_count == 0:
                         # Création des thresholds depuis les templates
                         for tpl in templates:
-                            t = ThresholdNew(
+                            t = Threshold(
                                 id=uuid.uuid4(),
                                 metric_instance_id=inst.id,
                                 name=tpl.name,
@@ -365,17 +365,17 @@ def init_if_first_seen(
                 if mtype == "numeric" and _is_percent_like(name, unit):
                     exists = session.scalar(
                         select(func.count())
-                        .select_from(ThresholdNew)
+                        .select_from(Threshold)
                         .where(
-                            ThresholdNew.metric_instance_id == inst.id,
-                            ThresholdNew.name == "default",
+                            Threshold.metric_instance_id == inst.id,
+                            Threshold.name == "default",
                         )
                     ) or 0
 
                     if exists == 0:
                         # Création d'un threshold "default" générique
                         session.add(
-                            ThresholdNew(
+                            Threshold(
                                 id=uuid.uuid4(),
                                 metric_instance_id=inst.id,
                                 name="default",

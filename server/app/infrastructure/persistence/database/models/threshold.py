@@ -1,4 +1,4 @@
-# server/app/infrastructure/persistence/database/models/threshold_new.py
+# server/app/infrastructure/persistence/database/models/threshold.py
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
 
-class ThresholdNew(Base):
-    __tablename__ = "thresholds_new"
+class Threshold(Base):
+    __tablename__ = "thresholds"
 
     __table_args__ = (
         # Un seuil nommé "name" par metric_instance

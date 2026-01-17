@@ -23,7 +23,7 @@ from .outbox_event import OutboxEvent, OutboxStatus
 from .metric_definitions import MetricDefinitions
 from .metric_instance import MetricInstance
 from .threshold_template import ThresholdTemplate
-from .threshold_new import ThresholdNew
+from .threshold import Threshold
 
 __all__ = [
     "Client",
@@ -42,5 +42,5 @@ __all__ = [
     "MetricDefinitions",
     "MetricInstance",
     "ThresholdTemplate",
-    "ThresholdNew"
+    "Threshold"
 ]

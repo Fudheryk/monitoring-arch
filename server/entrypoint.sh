@@ -51,9 +51,10 @@ have_alembic = "alembic_version" in tables
 
 # Ensemble minimal des tables "app" (ajuste si nécessaire)
 app_tables = {
-    "clients","api_keys","machines","metrics","samples","thresholds",
-    "alerts","incidents","http_targets","ingest_events","outbox_events",
-    "notification_log","client_settings","users"
+    "clients", "api_keys", "machines", "metric_definitions", "metric_instances",
+    "samples", "thresholds", "alerts", "incidents", "http_targets",
+    "ingest_events", "outbox_events", "notification_log", "client_settings",
+    "users", "client_incident_counter", "threshold_templates"
 }
 
 if have_alembic:

@@ -20,7 +20,7 @@ La validation *métier* dépend du type de la métrique (number/bool/string) et
 est faite **dans l'endpoint**, qui connaît ce type à l’exécution.
 
 ⚠️ Remarque :
-Ce module est volontairement agnostique du modèle ORM utilisé (Threshold ou ThresholdNew) :
+Ce module est volontairement agnostique du modèle ORM utilisé (Threshold) :
 il décrit uniquement la "forme" JSON échangée par l’API.
 """
 

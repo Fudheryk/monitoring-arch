@@ -252,7 +252,7 @@ def upgrade() -> None:
     # THRESHOLDS_NEW (seuils effectifs appliqués à une metric_instance)
     # =========================================================================
     op.create_table(
-        "thresholds_new",
+        "thresholds",
         sa.Column("id", UUIDType, primary_key=True),
         sa.Column("metric_instance_id", UUIDType, nullable=False),
         sa.Column("template_id", UUIDType, nullable=True),
@@ -284,7 +284,7 @@ def upgrade() -> None:
     if is_pg:
         op.create_unique_constraint(
             "uq_thresholds_metric_instance_id_name",
-            "thresholds_new",
+            "thresholds",
             ["metric_instance_id", "name"],
         )
 
@@ -669,7 +669,7 @@ def upgrade() -> None:
         sa.Column("resolved_at", TSTZ, nullable=True),
         sa.Column("created_at", TSTZ, server_default=now_sql),
         # ✅ FK ajoutées pour alerts
-        sa.ForeignKeyConstraint(["threshold_id"], ["thresholds_new.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["threshold_id"], ["thresholds.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["machine_id"], ["machines.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["metric_instance_id"], ["metric_instances.id"], ondelete="SET NULL"),
     )
@@ -848,8 +848,8 @@ def downgrade() -> None:
     # THRESHOLDS_NEW
     # =========================================================================
     if is_pg:
-        op.drop_constraint("uq_thresholds_metric_instance_id_name", "thresholds_new", type_="unique")
-    op.drop_table("thresholds_new")
+        op.drop_constraint("uq_thresholds_metric_instance_id_name", "thresholds", type_="unique")
+    op.drop_table("thresholds")
 
     # =========================================================================
     # THRESHOLD TEMPLATES

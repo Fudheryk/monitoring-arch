@@ -5,7 +5,7 @@ server/app/application/services/evaluation_service.py
 Service d’évaluation des seuils et gestion des alertes/incidents.
 
 Pipeline (version refacto) :
-    1. Charger les thresholds actifs d’une machine (ThresholdNew)
+    1. Charger les thresholds actifs d’une machine (Threshold)
     2. Pour chaque threshold + metric_instance :
          - vérifier si la métrique est alertable (pas en pause, alerting activé)
          - lire le dernier sample (Sample.metric_instance_id)
@@ -19,7 +19,7 @@ Pipeline (version refacto) :
 
 Notes importantes :
 - Une MetricInstance SANS SAMPLE n’est pas considérée comme en alerte ni OK → statut NO_DATA géré au niveau API.
-- Un threshold inactif (is_active=False) est ignoré (filtré dans ThresholdNewRepository.for_machine()).
+- Un threshold inactif (is_active=False) est ignoré (filtré dans ThresholdRepository.for_machine()).
 - Les alerts ne sont créées QUE si :
     * seuil violé
     * metric_instance.is_alerting_enabled == True
@@ -79,7 +79,7 @@ def evaluate_machine(machine_id) -> int:
     Comportement :
         - Ignore les MetricInstance pausées
         - Ignore les MetricInstance sans sample (NO_DATA ne déclenche pas d'alerte de seuil)
-        - Évalue uniquement les seuils (thresholds_new) :
+        - Évalue uniquement les seuils (thresholds) :
             * ouvre/maintient les alertes et incidents de seuil en cas de violation
             * résout les alertes/incidents de seuil quand il n’y a plus de violation
             * envoie une notification à l’ouverture ET à la résolution du défaut
@@ -103,7 +103,7 @@ def evaluate_machine(machine_id) -> int:
     from app.infrastructure.persistence.repositories.alert_repository import AlertRepository
     from app.infrastructure.persistence.repositories.client_settings_repository import ClientSettingsRepository
     from app.infrastructure.persistence.repositories.incident_repository import IncidentRepository
-    from app.infrastructure.persistence.repositories.threshold_new_repository import ThresholdNewRepository
+    from app.infrastructure.persistence.repositories.threshold_repository import ThresholdRepository
 
     # -------------------------------------------------------------------
     # 1) Validation / normalisation de l'UUID
@@ -133,7 +133,7 @@ def evaluate_machine(machine_id) -> int:
     threshold_resolutions_to_notify: list[dict[str, Any]] = []
 
     with open_session() as session:
-        trepo = ThresholdNewRepository(session)
+        trepo = ThresholdRepository(session)
         arepo = AlertRepository(session)
         irepo = IncidentRepository(session)
 
@@ -151,8 +151,8 @@ def evaluate_machine(machine_id) -> int:
         client_id = machine.client_id
 
         # -------------------------------------------------------------------
-        # 3) Charger toutes les paires (ThresholdNew, MetricInstance) ACTIVES
-        #    (trepo.for_machine filtre déjà sur ThresholdNew.is_active == True)
+        # 3) Charger toutes les paires (Threshold, MetricInstance) ACTIVES
+        #    (trepo.for_machine filtre déjà sur Threshold.is_active == True)
         # -------------------------------------------------------------------
 
         # -------------------------------------------------------------------

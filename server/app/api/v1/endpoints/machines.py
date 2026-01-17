@@ -26,7 +26,7 @@ from app.infrastructure.persistence.database.models.sample import Sample
 from app.infrastructure.persistence.database.models.metric_definitions import MetricDefinitions
 from app.infrastructure.persistence.database.models.incident import Incident
 from app.infrastructure.persistence.database.models.alert import Alert
-from app.infrastructure.persistence.database.models.threshold_new import ThresholdNew
+from app.infrastructure.persistence.database.models.threshold import Threshold
 
 # ——————————————————————————————————————————————
 # Schémas + serializers
@@ -43,15 +43,15 @@ from app.api.v1.serializers.machine import (
     serialize_machine_detail,
 )
 
-# ↓ Repositories adaptés : version MetricInstance + ThresholdNew
+# ↓ Repositories adaptés : version MetricInstance + Threshold
 from app.infrastructure.persistence.repositories.metric_instances_repository import (
     MetricInstancesRepository,
 )
 from app.infrastructure.persistence.repositories.metric_definitions_repository import (
     MetricDefinitionsRepository,
 )
-from app.infrastructure.persistence.repositories.threshold_new_repository import (
-    ThresholdNewRepository,
+from app.infrastructure.persistence.repositories.threshold_repository import (
+    ThresholdRepository,
 )
 
 # ✅ Auth JWT (cookies) pour les endpoints UI
@@ -179,7 +179,7 @@ async def get_machine_detail(
     - Status machine UP/DOWN
     - Liste des métriques (MetricInstance) avec :
         * dernier sample
-        * seuil "default" éventuel (ThresholdNew)
+        * seuil "default" éventuel (Threshold)
         * statut métrique : "OK" / "NO_DATA"
 
     NOTE: on ne renvoie volontairement PAS `type` ni `unit`.
@@ -297,10 +297,10 @@ async def get_machine_detail(
     default_thresholds: dict[uuid.UUID, ThresholdOut] = {}
     if metric_instance_ids:
         trows = db.scalars(
-            select(ThresholdNew)
+            select(Threshold)
             .where(
-                ThresholdNew.metric_instance_id.in_(metric_instance_ids),
-                ThresholdNew.name == "default",
+                Threshold.metric_instance_id.in_(metric_instance_ids),
+                Threshold.name == "default",
             )
         ).all()
         for t in trows:
@@ -380,7 +380,7 @@ async def get_machine_metric_config(
     - indicateurs d'onboarding (is_suggested_critical, default_condition)
     - flags de config (is_alerting_enabled, is_paused, needs_threshold)
     - baseline / last_value
-    - seuil primaire issu de ThresholdNew (si existe)
+    - seuil primaire issu de Threshold (si existe)
 
     ✅ Auth: JWT cookies
     ✅ Multi-tenant: machine.client_id doit matcher current_user.client_id
@@ -395,7 +395,7 @@ async def get_machine_metric_config(
     # 2) Repositories adaptés
     repo_metric = MetricInstancesRepository(db)
     repo_catalog = MetricDefinitionsRepository(db)
-    repo_threshold = ThresholdNewRepository(db)
+    repo_threshold = ThresholdRepository(db)
 
     # 3) Chargement toutes métriques de la machine
     metrics: list[MetricInstance] = repo_metric.get_by_machine(machine_id)
@@ -410,7 +410,7 @@ async def get_machine_metric_config(
         )
 
         # Seuil primaire sur MetricInstance
-        th: ThresholdNew | None = repo_threshold.get_primary_for_metric(m.id)
+        th: Threshold | None = repo_threshold.get_primary_for_metric(m.id)
 
         # Fallbacks métadonnées
         group_name = getattr(m, "group_name", None) or (catalog.group_name if catalog else None)

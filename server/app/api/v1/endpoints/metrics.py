@@ -2,7 +2,7 @@ from __future__ import annotations
 """
 server/app/api/v1/endpoints/metrics.py
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Endpoints Metrics (MetricInstance / ThresholdNew) — JWT cookies (UI).
+Endpoints Metrics (MetricInstance / Threshold) — JWT cookies (UI).
 
 Routes :
 - GET    /api/v1/metrics                          → ping JWT (debug/smoke)
@@ -24,7 +24,7 @@ from app.domain.policies import _norm_metric_type, normalize_comparison
 from app.infrastructure.persistence.database.models.machine import Machine
 from app.infrastructure.persistence.database.models.metric_definitions import MetricDefinitions
 from app.infrastructure.persistence.database.models.metric_instance import MetricInstance
-from app.infrastructure.persistence.database.models.threshold_new import ThresholdNew
+from app.infrastructure.persistence.database.models.threshold import Threshold
 from app.infrastructure.persistence.database.session import get_db
 from app.presentation.api.deps import get_current_user
 from app.presentation.api.schemas.threshold import CreateDefaultThresholdIn, ToggleAlertingIn
@@ -202,10 +202,10 @@ async def upsert_default_threshold(
         metric_instance.is_alerting_enabled = bool(payload.alert_enabled)
 
     # Chercher seuil "default" existant pour cette instance
-    thr: ThresholdNew | None = db.scalars(
-        select(ThresholdNew).where(
-            ThresholdNew.metric_instance_id == metric_instance.id,
-            ThresholdNew.name == "default",
+    thr: Threshold | None = db.scalars(
+        select(Threshold).where(
+            Threshold.metric_instance_id == metric_instance.id,
+            Threshold.name == "default",
         )
     ).first()
 
@@ -281,7 +281,7 @@ async def upsert_default_threshold(
     updated = False
 
     if thr is None:
-        thr = ThresholdNew(
+        thr = Threshold(
             id=uuid.uuid4(),
             metric_instance_id=metric_instance.id,
             name="default",

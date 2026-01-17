@@ -860,7 +860,7 @@ def create_threshold(metric_name: str, default_value: float) -> None:
     
     # Vérifier si un seuil existe déjà
     check_sql = f"""
-    SELECT COUNT(*) FROM thresholds_new
+    SELECT COUNT(*) FROM thresholds
     WHERE metric_instance_id = '{metric_id}' AND name = 'default';
     """
     existing = run_psql_scalar_int(check_sql)
@@ -868,7 +868,7 @@ def create_threshold(metric_name: str, default_value: float) -> None:
     if existing and existing > 0:
         log(f"ℹ️  Un seuil DEFAULT existe déjà pour {metric_name}, mise à jour...")
         sql = f"""
-        UPDATE thresholds_new
+        UPDATE thresholds
         SET condition = 'gt',
             value_num = {default_value},
             is_active = true,
@@ -878,7 +878,7 @@ def create_threshold(metric_name: str, default_value: float) -> None:
     else:
         log(f"ℹ️  Création d'un nouveau seuil DEFAULT pour {metric_name}...")
         sql = f"""
-        INSERT INTO thresholds_new (
+        INSERT INTO thresholds (
             id, metric_instance_id, name, condition, value_num,
             severity, is_active, consecutive_breaches, created_at, updated_at
         ) VALUES (
@@ -929,7 +929,7 @@ def diag_thresholds():
     sql = f"""
     SELECT t.id, mi.name_effective, t.name, t.condition, t.value_num,
            t.severity, t.is_active, t.created_at
-    FROM thresholds_new t
+    FROM thresholds t
     JOIN metric_instances mi ON mi.id = t.metric_instance_id
     WHERE mi.machine_id = ({sql_machine_id_subquery()})
     ORDER BY mi.name_effective, t.name;
