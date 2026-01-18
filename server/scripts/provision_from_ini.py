@@ -32,6 +32,7 @@ Connexion DB
 """
 
 import os
+import re
 import sys
 import uuid
 import secrets
@@ -128,9 +129,11 @@ def gen_alphanum(length: int) -> str:
     return "".join(secrets.choice(ALNUM) for _ in range(length))
 
 
-def gen_password() -> str:
-    # Password admin initial (copiable). Tu peux ajuster la longueur si besoin.
-    return secrets.token_urlsafe(24)
+def gen_password(length: int = 32) -> str:
+    """
+    Génère un mot de passe strictement alphanumérique (A-Za-z0-9).
+    """
+    return gen_alphanum(length)
 
 
 # ---------------------------- HTTP target parsing ----------------------------
@@ -198,7 +201,10 @@ def provision_from_ini(ini_path: Path) -> None:
     # ---- admin
     admin_email = _cfg_get(cfg, "admin", "email")
     admin_role = _cfg_get(cfg, "admin", "role", "admin_client")
-    admin_password = _cfg_get(cfg, "admin", "password", "")  # vide => généré
+    admin_password = _cfg_get(cfg, "admin", "password", "")
+
+    if admin_password and not re.fullmatch(r"[A-Za-z0-9]+", admin_password):
+        raise SystemExit("[admin] password doit être alphanum ASCII uniquement (A-Za-z0-9).")
 
     if not admin_email:
         raise SystemExit("INI invalide: [admin] email est requis.")

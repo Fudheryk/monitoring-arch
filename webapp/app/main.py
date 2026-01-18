@@ -644,6 +644,8 @@ async def fragment_events(request: Request):
 
         for n in notifs:
             delivery_status = (n.get("status") or "pending").lower()
+            if delivery_status.startswith("skipped_"):
+                continue            
             severity = (n.get("severity") or "").lower() or None
             ts = n.get("sent_at") or n.get("created_at")
 
