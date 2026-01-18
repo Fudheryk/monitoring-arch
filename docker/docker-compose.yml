@@ -77,8 +77,7 @@ services:
     stop_signal: SIGINT
     stop_grace_period: 20s
     healthcheck:
-      # ↓ CORRIGÉ: Interval augmenté (10s->30s) pour éviter spam logs en dev
-      test: ["CMD-SHELL", "curl -fsSL http://localhost:8000/api/v1/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:80/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -270,7 +269,7 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:80/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:80/api/v1/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -324,6 +323,23 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # ---------------------------------------------------------------------------
+  # Monitoring Status Dashboard
+  # ---------------------------------------------------------------------------
+  status:
+    image: python:3.11-slim
+    container_name: monitoring-status-dev
+    working_dir: /app
+    volumes:
+      - ../status-dashboard:/app:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: sh -lc "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 9100"
+    restart: unless-stopped
+    networks:
+      - default
+    security_opt:
+      - no-new-privileges:true
 
 # =============================================================================
 # Volumes

@@ -1,0 +1,35 @@
+/* status-dashboard/static/style.css */
+:root { --bg:#0b1020; --card:#111a33; --text:#e8eeff; --muted:#a9b4d0; }
+*{ box-sizing:border-box; }
+body{ margin:0; font-family:system-ui,Arial,sans-serif; background:var(--bg); color:var(--text); }
+.wrap{ max-width:1100px; margin:32px auto; padding:0 16px; }
+header{ display:flex; justify-content:space-between; align-items:flex-end; gap:16px; margin-bottom:16px; }
+h1{ margin:0; font-size:28px; }
+.card{ background:var(--card); border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:16px; margin:12px 0; }
+h2{ margin:0 0 12px 0; font-size:18px; }
+.muted{ color:var(--muted); font-size:13px; }
+
+.grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:12px;
+}
+.kpi{ padding:12px; background:rgba(255,255,255,.04); border-radius:10px; }
+.kpi .label{ color:var(--muted); font-size:12px; }
+.kpi .value{ font-size:18px; margin-top:6px; }
+
+table{ width:100%; border-collapse:collapse; }
+th,td{ padding:10px; border-bottom:1px solid rgba(255,255,255,.08); text-align:left; vertical-align:top; }
+th{ font-size:13px; color:var(--muted); font-weight:600; }
+
+.mono{ font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size:12px; }
+
+.badge{ padding:4px 8px; border-radius:999px; font-size:12px; display:inline-block; }
+.badge.ok{ background:#1c3; color:#052; }
+.badge.warn{ background:#fc3; color:#520; }
+.badge.bad{ background:#f66; color:#400; }
+
+@media (max-width:1000px){
+  .grid{ grid-template-columns:1fr; }
+  table{ display:block; overflow-x:auto; white-space:nowrap; }
+}

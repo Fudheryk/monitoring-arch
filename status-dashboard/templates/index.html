@@ -1,0 +1,117 @@
+<!-- status-dashboard/templates/index.html -->
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Status - michevre1.vps.webdock.cloud</title>
+  <link rel="stylesheet" href="/status/static/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🧭 Status VPS</h1>
+      <div class="muted">Dernière mise à jour : {{ now }}</div>
+    </header>
+
+    <section class="card">
+      <h2>Hôte</h2>
+      <div class="grid">
+        <div class="kpi">
+          <div class="label">CPU</div>
+          <div class="value">{{ "%.1f"|format(host.cpu_percent) }}%</div>
+          <div class="muted">
+            Load: {{ "%.2f"|format(host.load[0]) }} / {{ "%.2f"|format(host.load[1]) }} / {{ "%.2f"|format(host.load[2]) }}
+          </div>
+        </div>
+
+        <div class="kpi">
+          <div class="label">Mémoire</div>
+          <div class="value">{{ host.mem_used }} / {{ host.mem_total }}</div>
+          <div class="muted">{{ "%.1f"|format(host.mem_percent) }}%</div>
+        </div>
+
+        <div class="kpi">
+          <div class="label">Swap</div>
+          <div class="value">{{ host.swap_used }} / {{ host.swap_total }}</div>
+          <div class="muted">{{ "%.1f"|format(host.swap_percent) }}%</div>
+        </div>
+
+        <div class="kpi">
+          <div class="label">Disque</div>
+          <div class="value">{{ host.disk_used }} / {{ host.disk_total }}</div>
+          <div class="muted">{{ "%.1f"|format(host.disk_percent) }}%</div>
+        </div>
+
+        <div class="kpi">
+          <div class="label">Disque I/O (cumul)</div>
+          <div class="value">R {{ host.disk_read }} • W {{ host.disk_write }}</div>
+          <div class="muted">Depuis le boot (cumul système)</div>
+        </div>
+
+        <div class="kpi">
+          <div class="label">Réseau (cumul)</div>
+          <div class="value">RX {{ host.net_rx }} • TX {{ host.net_tx }}</div>
+          <div class="muted">Depuis le boot (cumul système)</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Conteneurs</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Nom</th>
+            <th>Statut</th>
+            <th>Health</th>
+            <th>Image</th>
+            <th>CPU</th>
+            <th>Mémoire</th>
+            <th>Réseau</th>
+            <th>PIDs</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for c in containers %}
+          <tr>
+            <td class="mono">{{ c.name }}</td>
+
+            <td>
+              <span class="badge {{ 'ok' if c.status == 'running' else 'warn' }}">{{ c.status }}</span>
+            </td>
+
+            <td>
+              {% if c.health %}
+                <span class="badge
+                  {{ 'ok' if c.health == 'healthy' else ('warn' if c.health == 'starting' else 'bad') }}">
+                  {{ c.health }}
+                </span>
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+
+            <td class="mono">{{ c.image }}</td>
+
+            <td>{{ "%.1f"|format(c.cpu or 0) }}%</td>
+
+            <td>
+              <div>{{ fmt.bytes_to_human(c.mem_usage) }}{% if c.mem_limit %} / {{ fmt.bytes_to_human(c.mem_limit) }}{% endif %}</div>
+              <div class="muted">{{ "%.1f"|format(c.mem_percent or 0) }}%</div>
+            </td>
+
+            <td>
+              <div>RX {{ fmt.bytes_to_human(c.net_rx) }}</div>
+              <div class="muted">TX {{ fmt.bytes_to_human(c.net_tx) }}</div>
+            </td>
+
+            <td class="mono">{{ c.pids if c.pids is not none else "—" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+</body>
+</html>
