@@ -41,7 +41,7 @@ services:
     healthcheck:
       disable: true
     environment:
-      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
     depends_on:
       db:
@@ -60,7 +60,7 @@ services:
     container_name: monitoring-api-dev
     command: ["api"]
     environment:
-      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       STUB_SLACK: "1"
       ALERT_REMINDER_MINUTES: "30"
@@ -106,7 +106,7 @@ services:
         -O fair -l debug
       "
     environment:
-      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       STUB_SLACK: "1"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
@@ -144,7 +144,7 @@ services:
     command: ["sh", "-lc", "celery -A app.workers.celery_app.celery beat -l debug --schedule /tmp/celerybeat-schedule --pidfile /tmp/celerybeat.pid"]
 
     environment:
-      DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/monitoring"
+      DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       STUB_SLACK: "1"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
@@ -179,7 +179,7 @@ services:
     container_name: monitoring-db-dev
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: monitoring
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d monitoring"]

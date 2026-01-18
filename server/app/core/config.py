@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     
     # Composants individuels (pour construction flexible)
     POSTGRES_USER: str = Field(default="postgres", env="POSTGRES_USER")
-    POSTGRES_PASSWORD: str = Field(default="postgres", env="POSTGRES_PASSWORD")
+    POSTGRES_PASSWORD: str = Field(default="postgres", env="DB_PASSWORD")
     POSTGRES_HOST: str = Field(default="db", env="POSTGRES_HOST")
     POSTGRES_PORT: int = Field(default=5432, env="POSTGRES_PORT")
     POSTGRES_DB: str = Field(default="monitoring", env="POSTGRES_DB")
@@ -165,7 +165,7 @@ class Settings(BaseSettings):
         if not self.DATABASE_URL:
             self.DATABASE_URL = (
                 f"postgresql+psycopg://"
-                f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+                f"{self.POSTGRES_USER}:{self.DB_PASSWORD}"
                 f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}"
                 f"/{self.POSTGRES_DB}"
             )

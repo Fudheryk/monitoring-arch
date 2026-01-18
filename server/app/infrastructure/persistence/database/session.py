@@ -22,9 +22,10 @@ from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import settings
 from app.infrastructure.persistence.database.base import Base  # metadata
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./app.db")
+DATABASE_URL = settings.DATABASE_URL
 
 _engine: Engine | None = None
 _SessionLocal: sessionmaker | None = None

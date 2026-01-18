@@ -15,7 +15,7 @@ set -euo pipefail
 #  - Proxy headers support for Uvicorn (PROXY_HEADERS=1)
 #
 # IMPORTANT FIX:
-#  - Uses settings.DATABASE_URL (built from POSTGRES_PASSWORD) instead of
+#  - Uses settings.DATABASE_URL (built from DB_PASSWORD) instead of
 #    raw DATABASE_URL env var which doesn't exist in .env.production
 # =============================================================================
 
@@ -51,7 +51,7 @@ run_api() {
   #   40 = état incohérent → erreur (intervention manuelle requise)
   #
   # IMPORTANT:
-  # - Utilise settings.DATABASE_URL (construit depuis POSTGRES_PASSWORD)
+  # - Utilise settings.DATABASE_URL (construit depuis DB_PASSWORD)
   # - La variable DATABASE_URL brute n'existe PAS dans .env.production
   # =========================================================================
   
@@ -60,7 +60,7 @@ import sys
 from app.core.config import settings
 from sqlalchemy import create_engine, inspect
 
-# ✅ Utilise settings.DATABASE_URL (construit depuis POSTGRES_PASSWORD)
+# ✅ Utilise settings.DATABASE_URL (construit depuis DB_PASSWORD)
 eng = create_engine(settings.DATABASE_URL)
 insp = inspect(eng)
 
