@@ -102,14 +102,14 @@ class MetricDefinitions(Base):
         nullable=True,
     )
 
-    # Familles dynamiques (disk[<mountpoint>].*, service.<unit>.service, network.<iface>.* ...)
+    # Familles dynamiques (disk[<mountpoint>].*, service.<unit>.service, network.<iface>.*, temperature.coretemp.<number>.* ...)
     is_dynamic_family: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         default=False,
     )
 
-    # Nom de la "dimension" dynamique (ex: "mountpoint", "unit", "iface"...)
+    # Nom de la "dimension" dynamique (ex: "mountpoint", "unit", "iface", "number", ... )
     dynamic_dimension: Mapped[str | None] = mapped_column(
         String(64),
         nullable=True,

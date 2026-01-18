@@ -100,6 +100,9 @@ def _parse_metric_dimensions(name: str) -> tuple[str, str]:
 
         "sshd.service"
             -> ("<unit>.service", "sshd")
+        
+        "temperature.coretemp.0.current"
+            -> ("temperature.coretemp.<number>.current", "0")
 
         "demo.bash.custom_metric"
             -> ("demo.bash.custom_metric", "")
@@ -142,9 +145,20 @@ def _parse_metric_dimensions(name: str) -> tuple[str, str]:
     if service_match:
         unit = service_match.group(1)  # ex: "ssh", "fwupd", "apt-daily-upgrade"
         return ("<unit>.service", unit)
+    
+    # -----------------------------
+    # 4) Famille dynamique TEMPERATURE (cœurs CPU)
+    #    ex: temperature.coretemp.0.current
+    # -----------------------------
+    temp_match = re.match(r"^temperature\.coretemp\.([^.]+)\.(.+)$", name)
+    if temp_match:
+        number = temp_match.group(1)   # ex: "0"
+        suffix = temp_match.group(2)    # ex: "current"
+        # Pattern catalogue = temperature.coretemp.<number>.<suffix>
+        return (f"temperature.coretemp.<number>.{suffix}", number)
 
     # -----------------------------
-    # 4) Pas de dimension dynamique
+    # 5) Pas de dimension dynamique
     # -----------------------------
     return (name, "")
 
@@ -257,7 +271,8 @@ def process_samples(
     - Résoudre les définitions avec support des patterns dynamiques :
         - disk[<mountpoint>].*
         - network.<iface>.*
-        - <unit>.service   ✅ (services systemd)
+        - <unit>.service (services systemd)
+        - temperature.coretemp.<number>.current
     - Initialiser baseline_value au premier passage
     - Appeler init_if_first_seen uniquement pour les thresholds
     """

@@ -170,6 +170,7 @@ def _resolve_catalog_meta(
           * disk[<mountpoint>].*   (ex: disk[/].usage_percent)
           * <unit>.service (ex: sshd.service)
           * network.<iface>.*      (ex: network.eth0.bytes_recv)
+          * temperature.coretemp.<number>.* (ex: temperature.coretemp.0.current)
     """
 
     # 1) Correspondance exacte (name + vendor)
@@ -209,6 +210,19 @@ def _resolve_catalog_meta(
             if len(parts) == 3:
                 metric_suffix = parts[2]
                 generic_key = f"network.<iface>.{metric_suffix}"
+                meta = mc_repo.get_by_name_and_vendor(name=generic_key, vendor="builtin")
+                if meta is not None:
+                    return meta
+        except (ValueError, IndexError):
+            pass
+
+    # 5) Famille dynamique : temperature coretemp
+    if name.startswith("temperature.coretemp."):
+        try:
+            parts = name.split(".", 3)
+            if len(parts) == 4:
+                metric_suffix = parts[3]
+                generic_key = f"temperature.coretemp.<number>.{metric_suffix}"
                 meta = mc_repo.get_by_name_and_vendor(name=generic_key, vendor="builtin")
                 if meta is not None:
                     return meta
