@@ -40,6 +40,11 @@ jobs:
             context: ./webapp
             dockerfile: ./webapp/Dockerfile.prod
 
+          # STATUS: build depuis status-dashboard/
+          - image: monitoring-status
+            context: ./status-dashboard
+            dockerfile: ./status-dashboard/Dockerfile
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -120,7 +125,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [monitoring-api, monitoring-web]
+        image: [monitoring-api, monitoring-web, monitoring-status]
 
     steps:
       - name: Run Trivy vulnerability scanner
