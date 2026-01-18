@@ -1,0 +1,16 @@
+# Ignore everything by default
+**
+
+# Allow only the app + assets + deps + Dockerfile
+!app/
+!app/**
+
+!static/
+!static/**
+
+!templates/
+!templates/**
+
+!requirements.txt
+!Dockerfile
+!.dockerignore

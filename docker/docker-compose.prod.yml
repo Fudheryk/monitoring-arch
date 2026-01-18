@@ -41,6 +41,8 @@ services:
     <<: *app-common
     container_name: monitoring-migrate
     command: ["alembic", "-c", "/app/server/alembic.ini", "upgrade", "head"]
+    healthcheck:
+      disable: true
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
@@ -76,7 +78,9 @@ services:
     stop_signal: SIGINT
     stop_grace_period: 20s
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health || exit 1"]
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"
       interval: 30s
       timeout: 5s
       retries: 5
@@ -294,7 +298,7 @@ services:
       - certbot_data:/var/www/certbot:ro
     depends_on:
       status:
-        condition: service_started
+        condition: service_healthy
       web:
         condition: service_healthy
       api:
@@ -313,6 +317,8 @@ services:
       resources:
         limits:
           memory: 50M
+        reservations:
+          memory: 20M
 
   # ---------------------------------------------------------------------------
   # Certbot pour Let's Encrypt (renouvellement auto)
