@@ -80,7 +80,11 @@ docker/.env.docker
 # Certificats TLS (Let's Encrypt, mkcert, etc.)
 # Générés sur le serveur → jamais versionnés
 docker/certs/*
+docker/archive-nginx/
 !docker/certs/.gitkeep
+docker/traefik-acme/
+docker/traefik-logs/
+
 
 # =============================================================================
 # Celery / Runtime state

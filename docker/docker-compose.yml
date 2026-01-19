@@ -1,20 +1,14 @@
-# docker/docker-compose.yml
 # =============================================================================
-# DEV Compose (Version corrigee)
+# Docker Compose - DEV avec Traefik
 # =============================================================================
-# Services: db, redis, migrate, api, worker, beat, web (SSR), proxy, flaky, mailhog, status
+# Services: db, redis, migrate, api, worker, beat, web, traefik, flaky, mailhog, status
 #
-# NOTE:
-# Tu as demande de ne corriger QUE les elements en defaut.
-# D'apres ton dashboard /status, les elements en defaut sont:
-# - monitoring-beat-dev : unhealthy
-# - monitoring-proxy-dev : unhealthy
-#
-# Corrections appliquees ci-dessous:
-# 1) beat: command rendu "une seule ligne" (moins de surprises avec quotes/newlines)
-# 2) proxy: healthcheck rendu plus robuste (API OU web) pour eviter faux "unhealthy"
-#
-# Tout le reste est conserve tel quel.
+# CHANGEMENTS vs Nginx:
+# - Traefik remplace nginx comme reverse proxy
+# - Certificats auto-signés gérés par Traefik (mkcert-like)
+# - Auto-découverte services via labels Docker
+# - Dashboard Traefik sur :8080
+# - Segmentation réseau: frontend (public) + backend (privé)
 # =============================================================================
 
 x-app-common: &app-common
@@ -26,7 +20,6 @@ x-app-common: &app-common
   volumes:
     - ../server:/app/server:cached
   restart: unless-stopped
-  # Securite dev (moins critique qu'en prod mais bonne pratique)
   security_opt:
     - no-new-privileges:true
 
@@ -47,6 +40,8 @@ services:
       db:
         condition: service_healthy
     restart: "no"
+    networks:
+      - backend
     deploy:
       resources:
         limits:
@@ -67,9 +62,8 @@ services:
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
       CORS_ALLOW_ORIGINS: "https://monitoring.local"
       LOG_LEVEL: "DEBUG"
-      # Uvicorn/FastAPI derriere nginx
       PROXY_HEADERS: "1"
-      FORWARDED_ALLOW_IPS: "127.0.0.1,172.16.0.0/12"
+      FORWARDED_ALLOW_IPS: "127.0.0.1,172.20.0.0/16,172.21.0.0/16"
     depends_on:
       db:
         condition: service_healthy
@@ -80,13 +74,30 @@ services:
     stop_signal: SIGINT
     stop_grace_period: 20s
     healthcheck:
-      test:
-        - CMD-SHELL
-        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')\""]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
+    networks:
+      - backend
+    labels:
+      # Traefik activation
+      - "traefik.enable=true"
+      - "traefik.docker.network=monitoring-dev_backend"
+      
+      # Router HTTP pour /api/*
+      - "traefik.http.routers.api-dev.rule=Host(`monitoring.local`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.api-dev.entrypoints=websecure"
+      - "traefik.http.routers.api-dev.tls=true"
+      - "traefik.http.routers.api-dev.service=api-dev"
+      - "traefik.http.services.api-dev.loadbalancer.server.port=8000"
+      
+      # Rate limiting sur /api/v1/ingest/*
+      - "traefik.http.middlewares.api-ratelimit.ratelimit.average=10"
+      - "traefik.http.middlewares.api-ratelimit.ratelimit.burst=20"
+      - "traefik.http.middlewares.api-ratelimit.ratelimit.period=1s"
+      - "traefik.http.routers.api-dev.middlewares=api-ratelimit@docker"
     deploy:
       resources:
         limits:
@@ -126,6 +137,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    networks:
+      - backend
     deploy:
       resources:
         limits:
@@ -137,12 +150,7 @@ services:
   beat:
     <<: *app-common
     container_name: monitoring-beat-dev
-
-    # FIX (beat unhealthy):
-    # - On force une commande sur UNE ligne pour eviter les soucis de quoting/newlines
-    # - On garde le pidfile attendu par le healthcheck
     command: ["sh", "-lc", "celery -A app.workers.celery_app.celery beat -l debug --schedule /tmp/celerybeat-schedule --pidfile /tmp/celerybeat.pid"]
-
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
@@ -159,13 +167,13 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 30s
     healthcheck:
-      test:
-        - CMD-SHELL
-        - 'test -s /tmp/celerybeat.pid && pid=$$(cat /tmp/celerybeat.pid) && test -d /proc/$$pid'
+      test: ["CMD-SHELL", "test -s /tmp/celerybeat.pid && pid=$$(cat /tmp/celerybeat.pid) && test -d /proc/$$pid"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
+    networks:
+      - backend
     deploy:
       resources:
         limits:
@@ -191,6 +199,8 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped
+    networks:
+      - backend
     deploy:
       resources:
         limits:
@@ -213,6 +223,8 @@ services:
     ports:
       - "6379:6379"
     restart: unless-stopped
+    networks:
+      - backend
     deploy:
       resources:
         limits:
@@ -247,6 +259,25 @@ services:
       retries: 6
       start_period: 15s
     restart: unless-stopped
+    networks:
+      - frontend
+      - backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=monitoring-dev_frontend"
+      
+      # Router HTTP pour / (UI)
+      - "traefik.http.routers.web-dev.rule=Host(`monitoring.local`)"
+      - "traefik.http.routers.web-dev.entrypoints=websecure"
+      - "traefik.http.routers.web-dev.tls=true"
+      - "traefik.http.routers.web-dev.priority=1"
+      - "traefik.http.routers.web-dev.service=web-dev"
+      - "traefik.http.services.web-dev.loadbalancer.server.port=3000"
+      
+      # Rate limiting web
+      - "traefik.http.middlewares.web-ratelimit.ratelimit.average=30"
+      - "traefik.http.middlewares.web-ratelimit.ratelimit.burst=50"
+      - "traefik.http.routers.web-dev.middlewares=web-ratelimit@docker"
     deploy:
       resources:
         limits:
@@ -255,29 +286,53 @@ services:
       - no-new-privileges:true
 
   # ---------------------------------------------------------------------------
-  # Nginx Reverse Proxy (dev)
+  # Traefik Reverse Proxy
   # ---------------------------------------------------------------------------
-  proxy:
-    image: nginx:alpine
-    container_name: monitoring-proxy-dev
+  traefik:
+    image: traefik:v3.2
+    container_name: monitoring-traefik-dev
+    command:
+      # API et Dashboard
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+      - "--ping=true"
+      
+      # Providers
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=monitoring-dev_frontend"
+      
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      
+      # Redirection HTTP -> HTTPS
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      
+      # Certificats auto-signés pour dev
+      - "--providers.file.filename=/traefik/dynamic.yml"
+      
+      # Logs
+      - "--log.level=DEBUG"
+      - "--accesslog=true"
     ports:
       - "80:80"
       - "443:443"
+      - "8080:8080"  # Dashboard Traefik
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./certs:/etc/nginx/certs:ro
-    depends_on:
-      web:
-        condition: service_healthy
-      api:
-        condition: service_healthy
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik-dev.yml:/traefik/dynamic.yml:ro
+      - ./certs:/certs:ro
+    restart: unless-stopped
+    networks:
+      - frontend
+      - backend
     healthcheck:
-      test: ["CMD-SHELL", "nginx -t || exit 1"]
-      interval: 30s
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 10s
-    restart: unless-stopped
     deploy:
       resources:
         limits:
@@ -297,11 +352,7 @@ services:
       - "127.0.0.1:8081:80"
     restart: unless-stopped
     networks:
-      default:
-        aliases:
-          - flaky.local
-          - flaky.test
-          - flaky.dev
+      - backend
     deploy:
       resources:
         limits:
@@ -314,9 +365,11 @@ services:
     image: mailhog/mailhog
     container_name: monitoring-mailhog-dev
     ports:
-      - "1025:1025"   # SMTP
-      - "8025:8025"   # UI web
+      - "1025:1025"
+      - "8025:8025"
     restart: unless-stopped
+    networks:
+      - backend
     deploy:
       resources:
         limits:
@@ -342,7 +395,8 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 9100 --reload
     restart: unless-stopped
     networks:
-      - default
+      - frontend
+      - backend
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -351,6 +405,20 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=monitoring-dev_frontend"
+      
+      # Router pour /status/*
+      - "traefik.http.routers.status-dev.rule=Host(`monitoring.local`) && PathPrefix(`/status`)"
+      - "traefik.http.routers.status-dev.entrypoints=websecure"
+      - "traefik.http.routers.status-dev.tls=true"
+      - "traefik.http.routers.status-dev.service=status-dev"
+      - "traefik.http.services.status-dev.loadbalancer.server.port=9100"
+      
+      # Middleware pour strip /status prefix
+      - "traefik.http.middlewares.status-strip.stripprefix.prefixes=/status"
+      - "traefik.http.routers.status-dev.middlewares=status-strip@docker"
 
 # =============================================================================
 # Volumes
@@ -360,8 +428,18 @@ volumes:
     driver: local
 
 # =============================================================================
-# Networks
+# Networks (segmentation)
 # =============================================================================
 networks:
-  default:
+  frontend:
     driver: bridge
+    name: monitoring-dev_frontend
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  backend:
+    driver: bridge
+    name: monitoring-dev_backend
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16

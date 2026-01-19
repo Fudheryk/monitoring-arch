@@ -1,0 +1,7 @@
+# docker/traefik-dev.yml
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/monitoring.local.pem
+        keyFile: /certs/monitoring.local-key.pem

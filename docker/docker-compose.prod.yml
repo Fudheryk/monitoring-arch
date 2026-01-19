@@ -1,14 +1,13 @@
 # =============================================================================
-# Docker Compose - PRODUCTION (Version corrigée)
+# Docker Compose - PRODUCTION avec Traefik + Let's Encrypt
 # =============================================================================
-# Utilise des images depuis Docker Hub Registry
-# Optimisé pour serveur 1.5 GB RAM / 2 CPU / 15 GB disque
-#
-# CORRECTIONS APPLIQUÉES:
-# - Redis: Correction configuration persistence (AOF vs snapshots)
-# - DB: Ajout sécurité (no-new-privileges, read_only, user)
-# - Certbot: Healthcheck générique sans domaine hardcodé
-# - Tous services: Ajout security_opt pour durcissement
+# CHANGEMENTS vs Nginx:
+# - Traefik remplace nginx comme reverse proxy
+# - Let's Encrypt automatique (HTTP Challenge) - supprime Certbot
+# - Auto-découverte services via labels Docker
+# - Dashboard Traefik sécurisé (basicauth)
+# - Segmentation réseau: public (traefik+web+status) + private (api+worker+db+redis)
+# - Network external: true (best practice)
 # =============================================================================
 
 x-app-common: &app-common
@@ -16,8 +15,6 @@ x-app-common: &app-common
   env_file: ../.env.production
   working_dir: /app/server
   restart: always
-  networks:
-    - monitoring-net
   logging:
     driver: "json-file"
     options:
@@ -29,7 +26,6 @@ x-app-common: &app-common
         memory: 200M
       reservations:
         memory: 100M
-  # Durcissement sécurité
   security_opt:
     - no-new-privileges:true
 
@@ -39,7 +35,6 @@ services:
   # ---------------------------------------------------------------------------
   migrate:
     <<: *app-common
-    container_name: monitoring-migrate
     command: ["alembic", "-c", "/app/server/alembic.ini", "upgrade", "head"]
     healthcheck:
       disable: true
@@ -51,6 +46,8 @@ services:
       db:
         condition: service_healthy
     restart: "no"
+    networks:
+      - private
     deploy:
       resources:
         limits:
@@ -61,13 +58,12 @@ services:
   # ---------------------------------------------------------------------------
   api:
     <<: *app-common
-    container_name: monitoring-api
     command: ["api"]
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
       PROXY_HEADERS: "1"
-      FORWARDED_ALLOW_IPS: "127.0.0.1,172.30.0.0/16"
+      FORWARDED_ALLOW_IPS: "127.0.0.1,172.30.0.0/16,172.31.0.0/16"
     depends_on:
       db:
         condition: service_healthy
@@ -78,26 +74,58 @@ services:
     stop_signal: SIGINT
     stop_grace_period: 20s
     healthcheck:
-      test:
-        - CMD-SHELL
-        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')\""]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 40s
+    networks:
+      - private
+    labels:
+      # Traefik activation
+      - "traefik.enable=true"
+      - "traefik.docker.network=monitoring-prod-private"
+      
+      # Router pour /api/* (neonmonitor.dockl.com)
+      - "traefik.http.routers.api.rule=Host(`neonmonitor.dockl.com`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls=true"
+      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.api.service=api"
+      - "traefik.http.services.api.loadbalancer.server.port=8000"
+      
+      # Rate limiting API général
+      - "traefik.http.middlewares.api-ratelimit.ratelimit.average=10"
+      - "traefik.http.middlewares.api-ratelimit.ratelimit.burst=20"
+      - "traefik.http.middlewares.api-ratelimit.ratelimit.period=1s"
+      
+      # Rate limiting spécifique ingest (plus permissif)
+      - "traefik.http.middlewares.ingest-ratelimit.ratelimit.average=10"
+      - "traefik.http.middlewares.ingest-ratelimit.ratelimit.burst=60"
+      
+      # Router prioritaire pour /api/v1/ingest/* avec rate limit spécifique
+      - "traefik.http.routers.api-ingest.rule=Host(`neonmonitor.dockl.com`) && PathPrefix(`/api/v1/ingest`)"
+      - "traefik.http.routers.api-ingest.entrypoints=websecure"
+      - "traefik.http.routers.api-ingest.tls=true"
+      - "traefik.http.routers.api-ingest.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.api-ingest.priority=10"
+      - "traefik.http.routers.api-ingest.service=api"
+      - "traefik.http.routers.api-ingest.middlewares=ingest-ratelimit@docker"
+      
+      # Rate limit par défaut pour les autres routes API
+      - "traefik.http.routers.api.middlewares=api-ratelimit@docker"
     deploy:
       resources:
         limits:
           memory: 180M
         reservations:
           memory: 60M
- 
+
   # ---------------------------------------------------------------------------
   # Celery Worker
   # ---------------------------------------------------------------------------
   worker:
     <<: *app-common
-    container_name: monitoring-worker
     command: ["celery", "-A", "app.workers.celery_app.celery", "worker", "-l", "info"]
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
@@ -116,6 +144,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    networks:
+      - private
     deploy:
       resources:
         limits:
@@ -128,7 +158,6 @@ services:
   # ---------------------------------------------------------------------------
   beat:
     <<: *app-common
-    container_name: monitoring-beat
     command:
       - celery
       - -A
@@ -152,13 +181,13 @@ services:
         condition: service_completed_successfully
     stop_grace_period: 30s
     healthcheck:
-      test:
-        - CMD-SHELL
-        - 'test -s /tmp/celerybeat.pid && pid=$$(cat /tmp/celerybeat.pid) && test -d /proc/$$pid'
+      test: ["CMD-SHELL", "test -s /tmp/celerybeat.pid && pid=$$(cat /tmp/celerybeat.pid) && test -d /proc/$$pid"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
+    networks:
+      - private
     deploy:
       resources:
         limits:
@@ -171,7 +200,6 @@ services:
   # ---------------------------------------------------------------------------
   db:
     image: postgres:16-alpine
-    container_name: monitoring-db
     user: postgres
     environment:
       POSTGRES_USER: postgres
@@ -191,7 +219,7 @@ services:
       - no-new-privileges:true
     restart: always
     networks:
-      - monitoring-net
+      - private
     logging:
       driver: "json-file"
       options:
@@ -209,7 +237,6 @@ services:
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
-    container_name: monitoring-redis
     command: >
       redis-server
       --requirepass ${REDIS_PASSWORD}
@@ -231,7 +258,7 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
     networks:
-      - monitoring-net
+      - private
     logging:
       driver: "json-file"
       options:
@@ -250,7 +277,6 @@ services:
   web:
     image: ${DOCKER_USERNAME}/monitoring-web:${VERSION:-latest}
     env_file: ../.env.production
-    container_name: monitoring-web
     environment:
       API_BASE_URL: "http://api:8000"
       LOGIN_PATH: "/login"
@@ -271,12 +297,39 @@ services:
       - no-new-privileges:true
     restart: always
     networks:
-      - monitoring-net
+      - public
+      - private
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=monitoring-prod-public"
+      
+      # Router pour / (UI principale)
+      - "traefik.http.routers.web.rule=Host(`neonmonitor.dockl.com`)"
+      - "traefik.http.routers.web.entrypoints=websecure"
+      - "traefik.http.routers.web.tls=true"
+      - "traefik.http.routers.web.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.web.priority=1"
+      - "traefik.http.routers.web.service=web"
+      - "traefik.http.services.web.loadbalancer.server.port=3000"
+      
+      # Rate limiting web
+      - "traefik.http.middlewares.web-ratelimit.ratelimit.average=30"
+      - "traefik.http.middlewares.web-ratelimit.ratelimit.burst=50"
+      
+      # Security headers
+      - "traefik.http.middlewares.security-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.security-headers.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.security-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.security-headers.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.security-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+      
+      - "traefik.http.routers.web.middlewares=web-ratelimit@docker,security-headers@docker"
     deploy:
       resources:
         limits:
@@ -285,85 +338,92 @@ services:
           memory: 260M
 
   # ---------------------------------------------------------------------------
-  # Nginx Reverse Proxy
+  # Traefik Reverse Proxy + Let's Encrypt
   # ---------------------------------------------------------------------------
-  proxy:
-    image: nginx:alpine
-    container_name: monitoring-proxy
+  traefik:
+    image: traefik:v3.2
+    command:
+      # API et Dashboard (sécurisé)
+      - "--api.dashboard=true"
+      - "--ping=true"
+      
+      # Providers
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=monitoring-prod-public"
+      
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      
+      # Redirection HTTP -> HTTPS
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+      
+      # Let's Encrypt (HTTP Challenge)
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-frederic.gilgarcia@gmail.com}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      # IMPORTANT: décommenter la ligne suivante pour tester en staging
+      # - "--certificatesresolvers.letsencrypt.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+      
+      # Logs
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--accesslog.filepath=/var/log/traefik/access.log"
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
-      - ./certs:/etc/nginx/certs:ro
-      - certbot_data:/var/www/certbot:ro
-    depends_on:
-      status:
-        condition: service_healthy
-      web:
-        condition: service_healthy
-      api:
-        condition: service_healthy
-    security_opt:
-      - no-new-privileges:true
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik-acme:/letsencrypt
+      - ./traefik-logs:/var/log/traefik
     restart: always
     networks:
-      - monitoring-net
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "2"
-    deploy:
-      resources:
-        limits:
-          memory: 50M
-        reservations:
-          memory: 20M
-
-  # ---------------------------------------------------------------------------
-  # Certbot pour Let's Encrypt (renouvellement auto)
-  # ---------------------------------------------------------------------------
-  certbot:
-    image: certbot/certbot:latest
-    container_name: monitoring-certbot
-    volumes:
-      - ./certs:/etc/letsencrypt
-      - certbot_data:/var/www/certbot
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
-    restart: always
-    networks:
-      - monitoring-net
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "2m"
-        max-file: "1"
+      - public
+      - private
     healthcheck:
-      test: ["CMD-SHELL", "certbot certificates 2>&1 | grep -q 'Certificate Name' || exit 1"]
-      interval: 60s
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 120s
-    # ↓ AJOUTÉ: Sécurité
-    security_opt:
-      - no-new-privileges:true
+    labels:
+      # Dashboard Traefik sécurisé (basicauth)
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`neonmonitor.dockl.com`) && PathPrefix(`/traefik`)"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.tls=true"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik.service=api@internal"
+      
+      # BasicAuth (générer avec: htpasswd -nb admin password)
+      # Exemple: admin:$apr1$xyz... (à remplacer)
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH:-admin:$$apr1$$8kV7qH2Y$$9Z8nF9eQ1xKZ0Q6X2eP.J0}"
+      - "traefik.http.routers.traefik.middlewares=traefik-auth@docker"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       resources:
         limits:
-          memory: 30M
+          memory: 150M
         reservations:
-          memory: 20M
+          memory: 80M
+    security_opt:
+      - no-new-privileges:true
 
   # ---------------------------------------------------------------------------
-  # Monitoring Status Dashboard (host + docker)
+  # Monitoring Status Dashboard
   # ---------------------------------------------------------------------------
   status:
     image: ${DOCKER_USERNAME}/monitoring-status:${VERSION:-latest}
-    container_name: monitoring-status
     restart: unless-stopped
     networks:
-      - monitoring-net
+      - public
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     healthcheck:
@@ -377,11 +437,36 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    logging: 
-      driver: "json-file" 
-      options: 
-        max-size: "5m" 
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
         max-file: "2"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=monitoring-prod-public"
+      
+      # Router pour /status/* sur michevre1.vps.webdock.cloud
+      - "traefik.http.routers.status.rule=Host(`michevre1.vps.webdock.cloud`) && PathPrefix(`/status`)"
+      - "traefik.http.routers.status.entrypoints=websecure"
+      - "traefik.http.routers.status.tls=true"
+      - "traefik.http.routers.status.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.status.service=status"
+      - "traefik.http.services.status.loadbalancer.server.port=9100"
+      
+      # Strip /status prefix
+      - "traefik.http.middlewares.status-strip.stripprefix.prefixes=/status"
+      
+      # Redirect / -> /status/ sur michevre1.vps.webdock.cloud
+      - "traefik.http.routers.status-root.rule=Host(`michevre1.vps.webdock.cloud`) && Path(`/`)"
+      - "traefik.http.routers.status-root.entrypoints=websecure"
+      - "traefik.http.routers.status-root.tls=true"
+      - "traefik.http.routers.status-root.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.status-root.middlewares=status-redirect@docker"
+      - "traefik.http.middlewares.status-redirect.redirectregex.regex=^https://michevre1.vps.webdock.cloud/$$"
+      - "traefik.http.middlewares.status-redirect.redirectregex.replacement=https://michevre1.vps.webdock.cloud/status/"
+      
+      - "traefik.http.routers.status.middlewares=status-strip@docker"
     deploy:
       resources:
         limits:
@@ -397,15 +482,14 @@ volumes:
     driver: local
   redis_data:
     driver: local
-  certbot_data:
-    driver: local
 
 # =============================================================================
-# Networks
+# Networks (segmentation + external)
 # =============================================================================
 networks:
-  monitoring-net:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.30.0.0/16
+  public:
+    external: true
+    name: monitoring-prod-public
+  private:
+    external: true
+    name: monitoring-prod-private
