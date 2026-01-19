@@ -44,7 +44,7 @@ This document explains, in detail, how the alerting & notification mechanism wor
 - **Notifications** are sent to Slack through `notify(...)` **only if** the **cooldown** (aka reminder interval) allows it.
 - The **cooldown** is resolved **per client** via:
   1) `client_settings.reminder_notification_seconds` (if set and >0), else  
-  2) `ALERT_REMINDER_MINUTES` from ENV (converted to seconds), else  
+  2) `DEFAULT_ALERT_REMINDER_MINUTES` from ENV (converted to seconds), else  
   3) hard default (e.g., 30 minutes).
 - Successful sends are tracked in `notification_log` with `status='success'` and `sent_at` timestamp. The **last success** is used to enforce cooldown (both for **alerts** and **incidents**).
 
@@ -55,7 +55,7 @@ This document explains, in detail, how the alerting & notification mechanism wor
 ### Notification cooldown source of truth
 
 - **Primary**: `client_settings.reminder_notification_seconds` (per client).
-- **Fallback**: `settings.ALERT_REMINDER_MINUTES` (ENV), converted to seconds.
+- **Fallback**: `settings.DEFAULT_ALERT_REMINDER_MINUTES` (ENV), converted to seconds.
 - **Hard default**: 30 minutes = 1800 seconds (when ENV isn’t available).
 
 ### `get_remind_seconds(client_id)`
@@ -199,9 +199,9 @@ ORDER BY now_utc DESC;
 
 ### Check effective ENV across services
 ```bash
-docker compose -f docker/docker-compose.yml exec -T api    env | grep ALERT_REMINDER_MINUTES
-docker compose -f docker/docker-compose.yml exec -T worker env | grep ALERT_REMINDER_MINUTES
-docker compose -f docker/docker-compose.yml exec -T beat   env | grep ALERT_REMINDER_MINUTES
+docker compose -f docker/docker-compose.yml exec -T api    env | grep DEFAULT_ALERT_REMINDER_MINUTES
+docker compose -f docker/docker-compose.yml exec -T worker env | grep DEFAULT_ALERT_REMINDER_MINUTES
+docker compose -f docker/docker-compose.yml exec -T beat   env | grep DEFAULT_ALERT_REMINDER_MINUTES
 ```
 
 ### Check effective reminder **from DB**
@@ -299,12 +299,12 @@ WHERE client_id = '551ade67-ec05-483e-8e19-981550244a4d';
 Update these locations (examples):
 - `.env.docker` / `.env.example`:
   ```env
-  ALERT_REMINDER_MINUTES=30
+  DEFAULT_ALERT_REMINDER_MINUTES=30
   ```
 - `docker/docker-compose.yml` under `environment` for `api`, `worker`, `beat`:
   ```yaml
   environment:
-    ALERT_REMINDER_MINUTES: "30"
+    DEFAULT_ALERT_REMINDER_MINUTES: "30"
   ```
 - CI & tests may override with `1` minute for speed:
   - `.github/workflows/ci.yml`
@@ -372,7 +372,7 @@ def get_remind_seconds(client_id: str | uuid.UUID | None) -> int:
     DEFAULT_SECONDS = 30 * 60
     def _env_seconds() -> int:
         try:
-            minutes = int(getattr(settings, "ALERT_REMINDER_MINUTES", 30))
+            minutes = int(getattr(settings, "DEFAULT_ALERT_REMINDER_MINUTES", 30))
             return max(1, minutes) * 60
         except Exception:
             return DEFAULT_SECONDS

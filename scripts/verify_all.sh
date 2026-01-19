@@ -75,7 +75,7 @@ ensure_env_docker() {
   #
   # ⚠️ Objectif : rester "CI-like" et éviter les surprises :
   # - On force un webhook Slack stub (httpbin) si absent
-  # - On réduit ALERT_REMINDER_MINUTES pour accélérer
+  # - On réduit DEFAULT_ALERT_REMINDER_MINUTES pour accélérer
   # - On active STUB_SLACK=1
   if [[ ! -f "$PROJECT_ROOT/.env.docker" ]]; then
     if [[ -f "$PROJECT_ROOT/.env.example" ]]; then
@@ -86,11 +86,11 @@ ensure_env_docker() {
     fi
     awk 'BEGIN{pslack=0; prem=0}
          /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; pslack=1; next}
-         /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; prem=1; next}
+         /^DEFAULT_ALERT_REMINDER_MINUTES=/ {print "DEFAULT_ALERT_REMINDER_MINUTES=1"; prem=1; next}
          {print}
          END{
            if(!pslack) print "SLACK_WEBHOOK=http://httpbin:80/status/204";
-           if(!prem)   print "ALERT_REMINDER_MINUTES=1";
+           if(!prem)   print "DEFAULT_ALERT_REMINDER_MINUTES=1";
            print "STUB_SLACK=1";
          }' "$PROJECT_ROOT/.env.docker" > "$PROJECT_ROOT/.env.docker.tmp"
     mv "$PROJECT_ROOT/.env.docker.tmp" "$PROJECT_ROOT/.env.docker"

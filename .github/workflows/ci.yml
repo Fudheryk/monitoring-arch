@@ -57,7 +57,7 @@ jobs:
       DATABASE_URL: "sqlite+pysqlite:///:memory:"
       REDIS_URL: "redis://localhost:6379/0"
       STUB_SLACK: "1"
-      ALERT_REMINDER_MINUTES: "1"
+      DEFAULT_ALERT_REMINDER_MINUTES: "1"
 
     steps:
       - name: Checkout
@@ -176,7 +176,7 @@ jobs:
 
     env:
       STUB_SLACK: "1"
-      ALERT_REMINDER_MINUTES: "1"
+      DEFAULT_ALERT_REMINDER_MINUTES: "1"
       API: http://localhost:8000
 
     steps:
@@ -211,7 +211,7 @@ jobs:
           cp .env.example .env.docker
           cat >> .env.docker << 'EOF'
           SLACK_WEBHOOK=http://httpbin:80/status/204
-          ALERT_REMINDER_MINUTES=1
+          DEFAULT_ALERT_REMINDER_MINUTES=1
           STUB_SLACK=1
           EOF
           cp .env.docker docker/.env.docker
@@ -350,7 +350,7 @@ jobs:
 
     env:
       STUB_SLACK: "1"
-      ALERT_REMINDER_MINUTES: "1"
+      DEFAULT_ALERT_REMINDER_MINUTES: "1"
       API: http://localhost:8000
 
     steps:
@@ -379,7 +379,7 @@ jobs:
           cp .env.example .env.docker
           cat >> .env.docker << 'EOF'
           SLACK_WEBHOOK=http://httpbin:80/status/204
-          ALERT_REMINDER_MINUTES=1
+          DEFAULT_ALERT_REMINDER_MINUTES=1
           STUB_SLACK=1
           EOF
           cp .env.docker docker/.env.docker

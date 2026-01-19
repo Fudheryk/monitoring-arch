@@ -238,7 +238,7 @@ compose-config:
 
 # Vérifie les env Slack côté worker
 env-worker:
-	$(COMPOSE) exec -T worker env | grep -E 'SLACK_WEBHOOK|STUB_SLACK|ALERT_REMINDER_MINUTES' || true
+	$(COMPOSE) exec -T worker env | grep -E 'SLACK_WEBHOOK|STUB_SLACK|DEFAULT_ALERT_REMINDER_MINUTES' || true
 
 # ---------------------------
 # BDD (Postgres)

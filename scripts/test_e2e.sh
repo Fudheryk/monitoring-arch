@@ -54,11 +54,11 @@ ensure_env_docker() {
       # ccc: impose quelques valeurs « sûres » pour l’E2E local
       awk 'BEGIN{slack=0;rem=0}
            /^SLACK_WEBHOOK=/ {print "SLACK_WEBHOOK=http://httpbin:80/status/204"; slack=1; next}
-           /^ALERT_REMINDER_MINUTES=/ {print "ALERT_REMINDER_MINUTES=1"; rem=1; next}
+           /^DEFAULT_ALERT_REMINDER_MINUTES=/ {print "DEFAULT_ALERT_REMINDER_MINUTES=1"; rem=1; next}
            {print}
            END{
              if(!slack) print "SLACK_WEBHOOK=http://httpbin:80/status/204";
-             if(!rem)   print "ALERT_REMINDER_MINUTES=1";
+             if(!rem)   print "DEFAULT_ALERT_REMINDER_MINUTES=1";
              print "STUB_SLACK=1";
            }' .env.docker > .env.tmp && mv .env.tmp .env.docker
     else
