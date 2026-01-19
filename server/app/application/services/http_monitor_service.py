@@ -114,26 +114,36 @@ def _update_result(t: HttpTarget, status: Optional[int], elapsed_ms: Optional[in
     t.last_error_message = err
 
 
-def _incident_cooldown_ok(db, incident_id, remind_seconds: int) -> bool:
+def _incident_cooldown_ok(db, client_id: uuid.UUID, incident_id: uuid.UUID, remind_seconds: int) -> bool:
     """
-    Retourne True si aucune notif Slack « success » récente (< remind_seconds) n’existe pour cet incident.
-    Passage en SECONDES (au lieu de minutes).
+    Retourne True si on peut envoyer une notification "incident HTTP" maintenant.
+
+    Best-practice (alignement global) :
+      - On NE doit pas raisonner en "slack-only".
+      - On s'appuie sur NotificationRepository.get_last_sent_at_any(...),
+        qui est la source de vérité des cooldowns et qui exclut déjà les
+        providers techniques (TECH_NOTIFICATION_PROVIDERS).
+
+    Règle :
+      - last_sent = dernière notif "réelle" envoyée pour CET incident (client_id + incident_id)
+      - si last_sent est absente => OK (première notif)
+      - sinon => OK uniquement si now - last_sent >= remind_seconds
     """
+    # Sécurité : si config foireuse, on évite le spam (fallback conservateur).
+    remind_seconds = int(remind_seconds or 0)
+    if remind_seconds <= 0:
+        remind_seconds = 30 * 60
+
     now = datetime.now(timezone.utc)
-    last_sent = db.scalar(
-        select(NotificationLog.sent_at)
-        .where(
-            NotificationLog.incident_id == incident_id,
-            NotificationLog.status == "success",
-            NotificationLog.provider == "slack",
-        )
-        .order_by(NotificationLog.sent_at.desc())
-        .limit(1)
-    )
+
+    # ✅ Source de vérité : repo (status=success, sent_at != NULL, providers techniques exclus)
+    nrepo = NotificationRepository(db)
+    last_sent = nrepo.get_last_sent_at_any(client_id, incident_id)
+
     last_sent = _as_utc(last_sent)
-    # Si jamais on n'a pas d'envoi précédent, on autorise la notif
     if last_sent is None:
         return True
+
     return (now - last_sent) >= timedelta(seconds=remind_seconds)
 
 
@@ -230,29 +240,11 @@ def check_http_targets() -> int:
     """
     Parcourt les cibles HTTP actives « dues » et retourne le nombre de checks effectués.
 
-    Règles :
-    - Met à jour last_check_at / last_status_code / last_response_time_ms / last_error_message / last_state_change_at.
-    - Si statut inattendu (ou erreur transport => status=0 + err != None) :
-        * ouvre / déduplique un incident HTTP_FAILURE (via IncidentRepository.open_http_check)
-        * enfile une notif (création ou reminder) après la boucle, en PRIMITIVES ONLY
-          (pas d’objets ORM) pour éviter DetachedInstanceError.
-    - Si statut redevenu attendu :
-        * résout l’incident OPEN correspondant
-        * enfile une notif de résolution (bypass cooldown) après la boucle, groupable.
+    Patch appliqué :
+      ✅ cooldown par incident basé sur TOUS les canaux "réels" via NotificationRepository.get_last_sent_at_any
+         (donc plus de slack-only).
 
-    Anti-spam :
-    - Cooldown de reminders par incident (secondes) via NotificationLog (provider=slack, status=success).
-    - Grouping (regroupement) par client selon ClientSettings (enabled + window_seconds).
-
-    Grâce globale de démarrage :
-    - Tant que uptime < STARTUP_GRACE_SECONDS :
-        * on NE CRÉE PAS de nouveaux incidents (ni notif d’ouverture) pour les statuts inattendus
-        * MAIS on continue de mettre à jour les targets
-        * ET on continue de RÉSOUDRE les incidents existants si la cible repasse OK
-
-    ⚠️ Important :
-    - Le gating "startup grace" est appliqué UNIQUEMENT à l’ouverture d’incident.
-      Il ne doit jamais empêcher une résolution.
+    Le reste du comportement est inchangé.
     """
     logger.warning("HTTP monitor START v2025-11-06-commit-after-update")
 
@@ -350,8 +342,6 @@ def check_http_targets() -> int:
                             "(url=%s, client_id=%s, uptime=%.1fs < %ds)",
                             t.url, t.client_id, uptime_sec, STARTUP_GRACE_SECONDS,
                         )
-                        # On n'ouvre pas, on ne notifie pas. On continue au prochain target.
-                        # (La résolution est gérée dans la branche OK, donc pas impactée.)
                         continue
 
                     # 6.b) Grâce par client : si la cible vient juste de passer DOWN, on attend avant d'ouvrir
@@ -364,7 +354,7 @@ def check_http_targets() -> int:
                             down_age = (datetime.now(timezone.utc) - t.last_state_change_at).total_seconds()
 
                         if down_age is not None and down_age < grace_seconds:
-                            # Log d’audit
+                            # Log d’audit (technique)
                             with open_session() as s_log:
                                 NotificationRepository(s_log).add_log(
                                     client_id=t.client_id,
@@ -397,8 +387,8 @@ def check_http_targets() -> int:
                         getattr(inc, "id", None), created, t.client_id, t.id
                     )
 
-                    # 6.d) Gate reminders : autoriser si created OU cooldown expiré pour CET incident
-                    ok_to_send = _incident_cooldown_ok(s, inc.id, remind_seconds)
+                    # 6.d) Gate reminders : created OU cooldown expiré (par incident, tous canaux réels)
+                    ok_to_send = _incident_cooldown_ok(s, t.client_id, inc.id, remind_seconds)
                     logger.warning(
                         "DEBUG: cooldown_gate — inc_id=%s created=%s ok_to_send=%s remind=%s",
                         inc.id, created, ok_to_send, remind_seconds
@@ -408,7 +398,6 @@ def check_http_targets() -> int:
                     s.commit()
 
                     if created or ok_to_send:
-                        # Buffer en primitives (envoi post-boucle)
                         text = (
                             f"{t.name} — {t.url}\n"
                             f"Status: {status}\n"
@@ -433,7 +422,6 @@ def check_http_targets() -> int:
 
                 else:
                     # 7) Résolution potentielle (OK / status accepté)
-                    #    On récupère l'incident OPEN AVANT résolution pour garder un incident_id pour le préfix (#xxx)
                     open_incident = s.scalar(
                         select(Incident)
                         .where(
@@ -464,7 +452,6 @@ def check_http_targets() -> int:
                                 "status": status,
                                 "ms": rt_ms,
                                 "detail": t.get_status_message(),
-                                # incident_id peut être None si l'incident OPEN n'a pas été retrouvé
                                 "incident_id": str(open_incident.id) if open_incident else None,
                             }
                         )
@@ -528,7 +515,7 @@ def check_http_targets() -> int:
                 group_text = "🚨 Plusieurs incidents actifs (regroupés):\n" + "\n".join(lines)
 
                 _enqueue_incident_notification_simple(
-                    incident_id=items[0]["incident_id"],  # leader technique
+                    incident_id=items[0]["incident_id"],  # leader technique (prefix UI + cooldown par incident côté notify)
                     client_id=items[0]["client_id"],
                     severity="warning",
                     text=group_text,
@@ -617,7 +604,6 @@ def check_http_targets() -> int:
                         "severity": "info",
                         "channel": None,
                         "client_id": str(client_id),
-                        # leader technique : premier incident_id non-null du groupe
                         "incident_id": next((it.get("incident_id") for it in items if it.get("incident_id")), None),
                         "alert_id": None,
                         "resolved": True,

@@ -17,6 +17,20 @@ from app.infrastructure.persistence.database.models.notification_log import Noti
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# ✅ Source de vérité unique : providers "techniques" à EXCLURE des calculs métier
+# (grouping window, "due reminder", etc.).
+#
+# Raison :
+# - ces lignes existent pour l'audit / le debug / des marqueurs de pipeline
+# - elles ne doivent pas "compter" comme des notifications utilisateur réelles
+# ---------------------------------------------------------------------------
+TECH_NOTIFICATION_PROVIDERS: tuple[str, ...] = (
+    "grace",       # marqueur de grâce (replanification)
+    "group_open",  # marqueur technique de regroupement (si utilisé)
+    "cooldown",    # log "skipped_cooldown" / marqueur de cadence
+)
+
 
 def notify_slack(text: str, *, client_id: uuid.UUID | None = None, webhook: str | None = None) -> bool:
     """
@@ -78,19 +92,39 @@ def notify_client(client_id: uuid.UUID, subject: str, text: str) -> dict:
 
 def get_last_notification_sent_at(client_id: uuid.UUID) -> datetime | None:
     """
-    Retourne le timestamp de la dernière notification RÉELLE envoyée pour ce client
-    (groupée ou individuelle). Exclut les marqueurs/grace techniques.
+    Retourne le timestamp de la dernière notification "RÉELLE" envoyée pour ce client.
 
-    Utilisé notamment par le monitoring HTTP pour décider si on est dans la
-    fenêtre de regroupement d'incidents.
+    Définition "réelle" (best practice) :
+      - status='success'
+      - sent_at non NULL
+      - exclut les providers techniques (audit/markers) qui ne doivent PAS impacter
+        la cadence métier (grouping window, reminders, etc.)
+
+    Providers techniques exclus :
+      - grace
+      - group_open
+      - cooldown
+
+    Utilisé notamment par :
+      - http_monitor_service (fenêtre de regroupement)
+      - runners de reminders (gating "due")
+
+    Args:
+        client_id: UUID du client
+
+    Returns:
+        datetime (UTC) ou None
     """
+    # ✅ Source de vérité : constante partagée du module
+    # (que tu as ajoutée : TECH_NOTIFICATION_PROVIDERS = ("grace","group_open","cooldown"))
     with open_session() as s:
         return s.scalar(
             select(NotificationLog.sent_at)
             .where(
                 NotificationLog.client_id == client_id,
                 NotificationLog.status == "success",
-                ~NotificationLog.provider.in_(["grace", "group_open"]),  # exclusion technique
+                NotificationLog.sent_at.is_not(None),
+                NotificationLog.provider.notin_(TECH_NOTIFICATION_PROVIDERS),
             )
             .order_by(NotificationLog.sent_at.desc())
             .limit(1)
