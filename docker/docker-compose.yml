@@ -63,7 +63,7 @@ services:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       STUB_SLACK: "1"
-      ALERT_REMINDER_MINUTES: "30"
+      DEFAULT_ALERT_REMINDER_MINUTES: "30"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
       CORS_ALLOW_ORIGINS: "https://monitoring.local"
       LOG_LEVEL: "DEBUG"
@@ -110,7 +110,7 @@ services:
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       STUB_SLACK: "1"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
-      ALERT_REMINDER_MINUTES: "30"
+      DEFAULT_ALERT_REMINDER_MINUTES: "30"
       LOG_LEVEL: "DEBUG"
     depends_on:
       db:
@@ -148,7 +148,7 @@ services:
       REDIS_URL: "${REDIS_URL:-redis://redis:6379/0}"
       STUB_SLACK: "1"
       PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60000"
-      ALERT_REMINDER_MINUTES: "30"
+      DEFAULT_ALERT_REMINDER_MINUTES: "30"
       LOG_LEVEL: "DEBUG"
     depends_on:
       db:

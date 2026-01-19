@@ -13,7 +13,7 @@
 
 x-app-common: &app-common
   image: ${DOCKER_USERNAME}/monitoring-api:${VERSION:-latest}
-  env_file: ../.env.production
+  env_file: ../.env.docker
   working_dir: /app/server
   restart: always
   networks:
@@ -172,7 +172,7 @@ services:
   db:
     image: postgres:16-alpine
     container_name: monitoring-db
-    user: postgres  # ← AJOUTÉ: Ne pas run en root
+    user: postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -249,6 +249,7 @@ services:
   # ---------------------------------------------------------------------------
   web:
     image: ${DOCKER_USERNAME}/monitoring-web:${VERSION:-latest}
+    env_file: ../.env.docker
     container_name: monitoring-web
     environment:
       API_BASE_URL: "http://api:8000"

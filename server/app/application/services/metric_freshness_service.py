@@ -45,10 +45,7 @@ from app.core.config import settings
 from app.infrastructure.persistence.database.session import open_session
 from app.infrastructure.persistence.database.models.metric_instance import MetricInstance
 from app.infrastructure.persistence.database.models.machine import Machine
-from app.infrastructure.persistence.database.models.incident import IncidentType
-from app.infrastructure.persistence.repositories.client_settings_repository import (
-    ClientSettingsRepository,
-)
+
 from app.infrastructure.persistence.repositories.incident_repository import (
     IncidentRepository,
 )
@@ -79,40 +76,16 @@ def _as_utc(dt_val: datetime | None) -> datetime | None:
         return dt_val.replace(tzinfo=timezone.utc)
     return dt_val.astimezone(timezone.utc)
 
+
 def _server_tzinfo():
     return ZoneInfo(getattr(settings, "SERVER_TIMEZONE", "UTC"))
+
 
 def _fmt_server_tz(dt_val: datetime | None) -> str:
     if not dt_val:
         return "inconnue"
     dt_utc = _as_utc(dt_val)
     return dt_utc.astimezone(_server_tzinfo()).isoformat()
-
-def is_metric_instance_fresh(
-    metric_instance: MetricInstance,
-    threshold_sec: int,
-    now: datetime | None = None,
-) -> bool:
-    """
-    Détermine si une MetricInstance a des données fraîches.
-
-    Logique:
-      - On ne compte que le temps écoulé depuis MONITORING_STARTED_AT
-      - age = now - max(metric_instance.updated_at, MONITORING_STARTED_AT)
-      - fresh si age <= threshold_sec
-    """
-    if now is None:
-        now = datetime.now(timezone.utc)
-
-    updated_at_utc = _as_utc(metric_instance.updated_at)
-
-    if updated_at_utc is None:
-        effective_since = MONITORING_STARTED_AT
-    else:
-        effective_since = max(updated_at_utc, MONITORING_STARTED_AT)
-
-    age_sec = (now - effective_since).total_seconds()
-    return age_sec <= threshold_sec
 
 
 def _iter_candidate_metrics(s: Session, *, batch_size: int = 2000) -> Iterable[tuple]:
@@ -142,21 +115,6 @@ def _iter_candidate_metrics(s: Session, *, batch_size: int = 2000) -> Iterable[t
         )
         .yield_per(batch_size)
     )
-
-
-def _get_threshold(
-    client_id: uuid.UUID,
-    csrepo: "ClientSettingsRepository",
-    thresholds_cache: Dict[uuid.UUID, int],
-) -> int:
-    if client_id not in thresholds_cache:
-        thresholds_cache[client_id] = csrepo.get_effective_metric_staleness_seconds(client_id)
-        logger.debug(
-            "metric_freshness: loaded staleness threshold for client_id=%s -> %ds",
-            client_id,
-            thresholds_cache[client_id],
-        )
-    return thresholds_cache[client_id]
 
 
 def _analyze_candidate_row_columns(
@@ -505,7 +463,25 @@ def _process_machine_decisions(
             }
             notify_task.apply_async(kwargs={"payload": payload}, queue="notify")
 
+
+def _no_data_threshold_seconds() -> int:
+    # NO_DATA_MINUTES = minutes -> secondes
+    try:
+        m = int(getattr(settings, "NO_DATA_MINUTES", 5))
+        return max(5, m) * 60
+    except Exception:
+        return 5 * 60
+
+
 def check_metrics_no_data() -> int:
+    """
+    Détecte les métriques "no data" (stale) et ouvre/résout des incidents.
+
+    IMPORTANT (design actuel) :
+    - Le seuil NO_DATA est GLOBAL et vient de l'ENV (NO_DATA_MINUTES).
+    - On ne lit PAS un seuil "par client" (DB) pour le no-data, volontairement.
+    """
+
     now = datetime.now(timezone.utc)
     uptime_sec = (now - MONITORING_STARTED_AT).total_seconds()
 
@@ -516,6 +492,8 @@ def check_metrics_no_data() -> int:
         STARTUP_GRACE_SECONDS,
     )
 
+    # Grace au démarrage (globale au service) :
+    # tant que uptime < STARTUP_GRACE_SECONDS, on ne fait rien.
     if uptime_sec < STARTUP_GRACE_SECONDS:
         logger.info(
             "metric_freshness: skipping NO-DATA check (startup grace active, uptime=%.1fs < %ds)",
@@ -525,20 +503,28 @@ def check_metrics_no_data() -> int:
         return 0
 
     stale_count = 0
-    thresholds_cache: Dict[uuid.UUID, int] = {}
+
+    # ✅ Seuil no-data : calculé UNE FOIS (car NO_DATA_MINUTES est global)
+    threshold_sec = _no_data_threshold_seconds()
+
+    # Buffers de décision
     stale_by_machine: Dict[uuid.UUID, Dict[uuid.UUID, list[Dict[str, Any]]]] = {}
     resolved_by_machine: Dict[uuid.UUID, Dict[uuid.UUID, list[Dict[str, Any]]]] = {}
     total_candidates_by_machine: Dict[uuid.UUID, int] = {}
     machines_cache: Dict[uuid.UUID, Any] = {}
 
     with open_session() as s:
-        csrepo = ClientSettingsRepository(s)
+        # csrepo n'est plus utilisé ici pour le no-data threshold (ENV only),
+        # mais tu peux le garder si d'autres appels l'utilisent ailleurs.
+        # Si tu veux être strict, tu peux le supprimer.
         irepo = IncidentRepository(s)
 
         logger.info("metric_freshness: starting candidate scan (optimized columns + yield_per)")
         logger.debug("metric_freshness: MONITORING_STARTED_AT=%s", MONITORING_STARTED_AT.isoformat())
+        logger.debug("metric_freshness: NO_DATA threshold (env) -> %ds", threshold_sec)
 
-        # Phase 1 (streaming)
+        # Phase 1 (streaming) : on parcourt les métriques candidates,
+        # on classe chaque candidate en "stale" ou "fresh", et on remplit les buffers.
         for (
             mi_id,
             mi_name,
@@ -548,7 +534,6 @@ def check_metrics_no_data() -> int:
             client_id,
             machine_status,
         ) in _iter_candidate_metrics(s, batch_size=2000):
-            threshold_sec = _get_threshold(client_id, csrepo, thresholds_cache)
 
             if _analyze_candidate_row_columns(
                 now=now,
@@ -559,15 +544,16 @@ def check_metrics_no_data() -> int:
                 hostname=hostname,
                 client_id=client_id,
                 machine_status=machine_status,
-                threshold_sec=threshold_sec,
+                threshold_sec=threshold_sec,  # ✅ seuil global réutilisé
                 stale_by_machine=stale_by_machine,
                 resolved_by_machine=resolved_by_machine,
                 total_candidates_by_machine=total_candidates_by_machine,
                 machines_cache=machines_cache,
             ):
+                # La fonction renvoie True si la métrique est stale
                 stale_count += 1
 
-        # Phase 2
+        # Phase 2 : décisions par machine (ouvrir incident machine / incidents métriques / résolution)
         machines_avec_notif_restore: set[tuple[uuid.UUID, uuid.UUID]] = set()
         all_pairs = _build_all_pairs(stale_by_machine, resolved_by_machine)
 
@@ -593,11 +579,13 @@ def check_metrics_no_data() -> int:
                 machines_avec_notif_restore=machines_avec_notif_restore,
             )
 
-        # Phase 3 (bonus)
+        # Phase 3 (bonus) : résoudre les incidents machine NO_DATA_MACHINE devenus obsolètes
         open_machine_incidents = irepo.list_open_machine_nodata_incidents()
         for inc in open_machine_incidents:
             mid = inc.machine_id
             cid = inc.client_id
+
+            # Si la machine a encore des candidates (stale ou fresh), on ne touche pas
             if (cid, mid) in all_pairs:
                 continue
 

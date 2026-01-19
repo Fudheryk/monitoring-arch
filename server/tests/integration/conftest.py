@@ -66,7 +66,7 @@ def pytest_configure(config) -> None:
         "postgresql+psycopg://postgres:postgres@localhost:5432/monitoring",
     )
     # 3) Raccourcir le cooldown pour les tests d’intégration (par défaut=1)
-    os.environ.setdefault("ALERT_REMINDER_MINUTES", "1")
+    os.environ.setdefault("DEFAULT_ALERT_REMINDER_MINUTES", "1")
 
     # 4) IMPORTANT : si app.core.config a déjà été importé, le recharger
     if "app.core.config" in sys.modules:

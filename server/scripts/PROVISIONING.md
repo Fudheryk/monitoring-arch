@@ -563,3 +563,21 @@ curl -sk -i -X POST "https://<DOMAIN>/api/v1/ingest/metrics" \
 **Attendu** : `HTTP/2 202`
 
 > À la première ingestion, la machine est enregistrée à partir de `hostname` + `fingerprint`.
+
+
+
+### EXECUTION 
+
+docker exec -it monitoring-api sh -lc '
+  set -e
+  cd /app
+
+  export PROVISION_CLIENT=true
+  export DATABASE_URL="postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
+
+  for f in server/scripts/provisioning/*.ini; do
+    [ -f "$f" ] || continue
+    echo "==> Provision: $f"
+    python server/scripts/provision_from_ini.py "$f"
+  done
+'

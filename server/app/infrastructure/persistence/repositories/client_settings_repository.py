@@ -264,7 +264,7 @@ class ClientSettingsRepository:
         Retourne la cadence de rappel anti-spam EN SECONDES pour ce client.
         Priorité :
         1) client_settings.reminder_notification_seconds (>0)
-        2) settings.ALERT_REMINDER_MINUTES (minutes -> secondes)
+        2) settings.DEFAULT_ALERT_REMINDER_MINUTES (minutes -> secondes)
         3) défaut dur = 30 minutes
         """
         DEFAULT_SECONDS = 30 * 60
@@ -272,7 +272,7 @@ class ClientSettingsRepository:
         if cs and isinstance(cs.reminder_notification_seconds, int) and cs.reminder_notification_seconds > 0:
             return cs.reminder_notification_seconds
         try:
-            minutes = int(getattr(settings, "ALERT_REMINDER_MINUTES", 30))
+            minutes = int(getattr(settings, "DEFAULT_ALERT_REMINDER_MINUTES", 30))
             return max(1, minutes) * 60
         except Exception:
             return DEFAULT_SECONDS
@@ -327,19 +327,41 @@ class ClientSettingsRepository:
     def get_effective_grace_period_seconds(self, client_id: UUID | None) -> int:
         """
         Retourne le délai de grâce en secondes (DB > ENV > défaut).
-        - DB: client_settings.grace_period_seconds
-        - ENV: settings.GRACE_PERIOD_SECONDS (optionnel)
-        - défaut: 120
+
+        Priorité :
+        1) DB: client_settings.grace_period_seconds (si row existante + valeur valide)
+        2) ENV: settings.DEFAULT_GRACE_PERIOD_SECONDS (si présent + valeur valide)
+        3) défaut: 120
         """
-        default_val = getattr(settings, "GRACE_PERIOD_SECONDS", 120)
-        cs = self.get_by_client_id(client_id) if client_id else None
+        # 1) Fallback env -> défaut
+        default_val_raw = getattr(settings, "DEFAULT_GRACE_PERIOD_SECONDS", None)
         try:
-            val = int(getattr(cs, "grace_period_seconds", None))
-            if val is None or val < 0:
-                return default_val
-            return val
+            default_val = int(default_val_raw) if default_val_raw is not None else 120
+        except Exception:
+            default_val = 120
+
+        # Pas de client => on ne peut pas lire la DB, on retourne le fallback
+        if not client_id:
+            return default_val
+
+        # 2) Lecture DB
+        cs = self.get_by_client_id(client_id)
+
+        raw = getattr(cs, "grace_period_seconds", None) if cs else None
+        if raw is None:
+            return default_val
+
+        try:
+            val = int(raw)
         except Exception:
             return default_val
+
+        # Convention : valeurs négatives invalides
+        if val < 0:
+            return default_val
+
+        return val
+
 
     def get_effective_metric_staleness_seconds(self, client_id: UUID) -> int:
         """

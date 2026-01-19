@@ -9,7 +9,7 @@ Tâches Celery pour les notifications avec :
 - Envoi Slack via webhook par client (BEST-EFFORT, ne bloque jamais l'email)
 - Envoi Email par client (avec retry Celery sur erreurs réseau/SMTP)
 - ✅ Cooldown (reminder) basé sur client_settings.reminder_notification_seconds
-  avec fallback sur settings.ALERT_REMINDER_MINUTES
+  avec fallback sur settings.DEFAULT_ALERT_REMINDER_MINUTES
 """
 
 from typing import Dict, Any, Optional
@@ -44,7 +44,7 @@ _INC_PREFIX_RE = re.compile(r"^\(#\d+\)\s+")
 # Cooldown / reminder : source de vérité unique (en secondes)
 #   - Priorité :
 #       1) client_settings.reminder_notification_seconds (>0)
-#       2) settings.ALERT_REMINDER_MINUTES (minutes -> secondes)
+#       2) settings.DEFAULT_ALERT_REMINDER_MINUTES (minutes -> secondes)
 #       3) défaut dur = 30 minutes
 # ---------------------------------------------------------------------------
 def get_remind_seconds(client_id: str | uuid.UUID | None) -> int:
@@ -52,7 +52,7 @@ def get_remind_seconds(client_id: str | uuid.UUID | None) -> int:
 
     def _env_seconds() -> int:
         try:
-            minutes = int(getattr(settings, "ALERT_REMINDER_MINUTES", 30))
+            minutes = int(getattr(settings, "DEFAULT_ALERT_REMINDER_MINUTES", 30))
             return max(1, minutes) * 60
         except Exception:
             return DEFAULT_SECONDS
@@ -646,7 +646,7 @@ def notify(self, payload: Dict[str, Any]) -> bool:
 
     - Cooldown :
         * Cooldown global basé sur client_settings.reminder_notification_seconds
-          (fallback ENV ALERT_REMINDER_MINUTES).
+          (fallback ENV DEFAULT_ALERT_REMINDER_MINUTES).
         * Si un rappel a déjà été envoyé récemment, on log un seul
           "skipped_cooldown" et on s'arrête sans tenter Slack ni email.
 

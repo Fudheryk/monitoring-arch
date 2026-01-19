@@ -184,7 +184,7 @@ def unit_env(request):
     os.environ.setdefault("ENV_FILE", "/dev/null")
     os.environ.setdefault("SLACK_WEBHOOK", "http://example.invalid/webhook")
     os.environ.setdefault("SLACK_DEFAULT_CHANNEL", "#canal")
-    os.environ.setdefault("ALERT_REMINDER_MINUTES", "1")
+    os.environ.setdefault("DEFAULT_ALERT_REMINDER_MINUTES", "1")
     os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///:memory:")
     os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
     os.environ.setdefault("CELERY_TASK_ALWAYS_EAGER", "1")

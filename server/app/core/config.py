@@ -81,7 +81,8 @@ class Settings(BaseSettings):
     # ALERTS
     # =========================================================================
     
-    ALERT_REMINDER_MINUTES: int = Field(default=30, env="ALERT_REMINDER_MINUTES")
+    DEFAULT_GRACE_PERIOD_SECONDS: int = Field(default=120, env="DEFAULT_GRACE_PERIOD_SECONDS")
+    DEFAULT_ALERT_REMINDER_MINUTES: int = Field(default=30, env="DEFAULT_ALERT_REMINDER_MINUTES")
     DEFAULT_PERCENT_THRESHOLD: float = Field(
         default=90.0, 
         env="DEFAULT_PERCENT_THRESHOLD"
