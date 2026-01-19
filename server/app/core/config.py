@@ -72,9 +72,9 @@ class Settings(BaseSettings):
     # =========================================================================
     
     NO_DATA_MINUTES: int = Field(default=5, env="NO_DATA_MINUTES")
-    MONITORING_STARTUP_GRACE_SECONDS: int = Field(
+    STARTUP_GRACE_SECONDS: int = Field(
         default=300, 
-        env="MONITORING_STARTUP_GRACE_SECONDS"
+        env="STARTUP_GRACE_SECONDS"
     )
     
     # =========================================================================

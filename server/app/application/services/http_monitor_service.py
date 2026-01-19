@@ -47,7 +47,7 @@ DEFAULT_METHOD = "GET"
 INCIDENT_TITLE_PREFIX = "HTTP check failed: "
 
 # Grâce globale de démarrage, pilotée par config.py
-STARTUP_GRACE_SECONDS = settings.MONITORING_STARTUP_GRACE_SECONDS
+STARTUP_GRACE_SECONDS = settings.STARTUP_GRACE_SECONDS
 
 __all__ = [
     "check_http_targets",

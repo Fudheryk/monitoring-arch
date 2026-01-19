@@ -63,7 +63,7 @@ MONITORING_STARTED_AT = datetime.now(timezone.utc)
 
 # Période de grâce après démarrage :
 # tant que uptime < STARTUP_GRACE_SECONDS, check_metrics_no_data() ne fait RIEN.
-STARTUP_GRACE_SECONDS = settings.MONITORING_STARTUP_GRACE_SECONDS
+STARTUP_GRACE_SECONDS = settings.STARTUP_GRACE_SECONDS
 
 METRIC_NO_DATA_TITLE_PREFIX = "Métrique donnée manquante : "
 
