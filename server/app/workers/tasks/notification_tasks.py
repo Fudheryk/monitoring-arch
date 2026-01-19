@@ -589,6 +589,38 @@ def _send_email(
 
 
 # ---------------------------------------------------------------------------
+# Grace period (confirmation persistance) — source de vérité unique (secondes)
+#   - Priorité :
+#       1) client_settings.grace_period_seconds (>=0)
+#       2) fallback dur = 0 (pas de grâce)
+# ---------------------------------------------------------------------------
+def get_grace_seconds(client_id: str | uuid.UUID | None) -> int:
+    """
+    Retourne la période de grâce (en secondes) pour confirmer qu'une alerte est persistante
+    avant d'envoyer la première notification (notify_alert).
+
+    Source de vérité : ClientSettingsRepository.get_effective_grace_period_seconds().
+    """
+    if not client_id:
+        return 0
+
+    try:
+        cid = client_id if isinstance(client_id, uuid.UUID) else uuid.UUID(str(client_id))
+    except Exception:
+        logger.warning("get_grace_seconds: bad client_id %r → fallback 0", client_id)
+        return 0
+
+    try:
+        with open_session() as s:
+            repo = ClientSettingsRepository(s)
+            seconds = repo.get_effective_grace_period_seconds(cid)
+            return max(0, int(seconds or 0))
+    except Exception:
+        logger.warning("get_grace_seconds: DB error → fallback 0", exc_info=True)
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # Tâche principale : notify
 # ---------------------------------------------------------------------------
 
@@ -766,7 +798,7 @@ def notify(self, payload: Dict[str, Any]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Tâche de haut niveau : notify_alert
+# Tâche de haut niveau : notify_alert (AVEC grace period)
 # ---------------------------------------------------------------------------
 
 @celery.task(
@@ -779,16 +811,19 @@ def notify(self, payload: Dict[str, Any]) -> bool:
 )
 def notify_alert(self, alert_id: str, *, remind_after_minutes: int | None = None) -> None:
     """
-    Notifie une alerte avec cooldown basé sur le client.
+    Notifie une alerte de seuil (Alert) avec 2 garde-fous :
 
-    Cette fonction :
-      - applique un cooldown basé sur client_settings.reminder_notification_seconds
-      - construit le payload (email/slack) avec un statut logique (OK/ERROR)
-      - n’envoie PAS directement mais délègue à notify(payload)
+      1) ✅ GRACE (confirmation persistance)
+         - avant la 1ère notification uniquement
+         - basé sur client_settings.grace_period_seconds
+         - référentiel de temps = Alert.triggered_at (UTC)
+         - tant que age < grace => on replanifie notify_alert (countdown)
 
-    Adaptation nouvelle archi :
-      - on utilise désormais MetricInstance au lieu de Metric
-      - le nom affiché dans le message vient de metric_instance.name_effective
+      2) Cooldown (reminder)
+         - basé sur client_settings.reminder_notification_seconds
+         - appliqué par alert_id via notification_log (provider slack success)
+
+    Puis délègue l'envoi réel à tasks.notify(payload) (Slack + Email).
     """
     if not alert_id:
         logger.warning("notify_alert appelé sans alert_id")
@@ -800,23 +835,25 @@ def notify_alert(self, alert_id: str, *, remind_after_minutes: int | None = None
         logger.warning("notify_alert appelé avec un alert_id invalide: %r", alert_id)
         return
 
-    # Imports locaux pour éviter les cycles d'import
-    import datetime as dt
+    # Imports locaux pour éviter les cycles
     from sqlalchemy import select
-    from app.infrastructure.persistence.database.session import open_session
     from app.infrastructure.persistence.database.models.notification_log import NotificationLog
     from app.infrastructure.persistence.database.models.alert import Alert
     from app.infrastructure.persistence.database.models.machine import Machine
-    # 🔁 NOUVEAU : on pointe sur MetricInstance
     from app.infrastructure.persistence.database.models.metric_instance import MetricInstance
     from app.workers.tasks.notification_tasks import notify as notify_task
-    from app.workers.tasks.notification_tasks import get_remind_seconds
 
-    # Helper interne : conversion override -> secondes
     def _override_to_seconds(override_minutes: int | None) -> int | None:
         if isinstance(override_minutes, int) and override_minutes > 0:
             return override_minutes * 60
         return None
+
+    # micro-jitter pour éviter de réveiller toutes les alertes pile à la même seconde
+    def _jitter_seconds(max_jitter: int = 5) -> int:
+        try:
+            return int(alert_uuid.int % (max_jitter + 1))
+        except Exception:
+            return 0
 
     try:
         with open_session() as session:
@@ -827,32 +864,101 @@ def notify_alert(self, alert_id: str, *, remind_after_minutes: int | None = None
 
             # Ne notifier que les alertes en cours
             if (alert.status or "").upper() != "FIRING":
-                logger.info(f"Alerte {alert_id} ignorée (status={alert.status})")
+                logger.info("Alerte %s ignorée (status=%s)", alert_id, alert.status)
                 return
 
-            # Machine liée à l'alerte (si présente)
+            # Machine / metric instance (pour enrichir le message)
             machine = session.get(Machine, alert.machine_id) if alert.machine_id else None
+            metric_instance = session.get(MetricInstance, alert.metric_instance_id) if alert.metric_instance_id else None
 
-            # 🔁 NOUVEAU : récupération de MetricInstance à partir de alert.metric_instance_id
-            metric_instance = (
-                session.get(MetricInstance, alert.metric_instance_id)
-                if alert.metric_instance_id
-                else None
-            )
-
-            # Détermination du client_id pour la cadence
+            # Déduire client_id
             raw_client_id = getattr(alert, "client_id", None) or getattr(machine, "client_id", None)
             if not isinstance(raw_client_id, uuid.UUID):
-                # Fallback neutre (UUID 0) si pas de client_id exploitable
                 raw_client_id = uuid.UUID(int=0)
             client_id = raw_client_id
 
-            # Déterminer le cooldown
+            now_utc = dt.datetime.now(dt.timezone.utc)
+
+            # ------------------------------------------------------------------
+            # 0) ✅ GRACE PERIOD (première notif uniquement)
+            # ------------------------------------------------------------------
+            grace_seconds = get_grace_seconds(client_id)
+
+            # Si triggered_at absent => on n'applique pas la grâce (fallback safe)
+            started_at = getattr(alert, "triggered_at", None)
+            if started_at is not None:
+                if started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=dt.timezone.utc)
+                else:
+                    started_at = started_at.astimezone(dt.timezone.utc)
+
+            if grace_seconds > 0 and started_at is not None:
+                # a) vérifier si on a déjà un "success" pour cette alerte (première notif déjà envoyée)
+                first_success_ts = session.scalar(
+                    select(NotificationLog.sent_at)
+                    .where(
+                        NotificationLog.alert_id == alert.id,
+                        NotificationLog.status == "success",
+                        NotificationLog.provider == "slack",
+                    )
+                    .order_by(NotificationLog.sent_at.asc())
+                    .limit(1)
+                )
+
+                # b) si aucune notif encore partie => appliquer la grâce
+                if first_success_ts is None:
+                    age_sec = (now_utc - started_at).total_seconds()
+                    if age_sec < grace_seconds:
+                        remaining = int(grace_seconds - age_sec)
+                        countdown = max(1, remaining + _jitter_seconds(5))
+
+                        # log technique (audit) — réutilise NotificationRepository existant
+                        try:
+                            nrepo = NotificationRepository(session)
+                            nrepo.add_log(
+                                client_id=client_id,
+                                provider="grace",
+                                recipient="",
+                                status="scheduled_grace",
+                                message=(
+                                    f"Grace active: requeue notify_alert in {countdown}s "
+                                    f"(age={int(age_sec)}s < grace={grace_seconds}s)"
+                                ),
+                                incident_id=None,
+                                alert_id=alert.id,
+                                set_sent_at=False,
+                            )
+                            session.commit()
+                        except Exception:
+                            session.rollback()
+                            logger.debug("notify_alert: failed to log grace marker", exc_info=True)
+
+                        logger.info(
+                            "notify_alert: grace active → reschedule",
+                            extra={
+                                "alert_id": str(alert.id),
+                                "client_id": str(client_id),
+                                "age_sec": int(age_sec),
+                                "grace_sec": int(grace_seconds),
+                                "countdown_sec": int(countdown),
+                            },
+                        )
+
+                        notify_alert.apply_async(
+                            args=[str(alert.id)],
+                            kwargs={"remind_after_minutes": remind_after_minutes},
+                            countdown=countdown,
+                            queue="notify",
+                        )
+                        return
+
+            # ------------------------------------------------------------------
+            # 1) Cooldown / reminder (par alert_id)
+            # ------------------------------------------------------------------
             override_seconds = _override_to_seconds(remind_after_minutes)
             remind_seconds = override_seconds if override_seconds is not None else get_remind_seconds(client_id)
             cooldown = dt.timedelta(seconds=remind_seconds)
 
-            # Dernier envoi réussi pour CETTE alerte (provider slack)
             last_success_ts = session.scalar(
                 select(NotificationLog.sent_at)
                 .where(
@@ -864,39 +970,29 @@ def notify_alert(self, alert_id: str, *, remind_after_minutes: int | None = None
                 .limit(1)
             )
 
-            now_utc = dt.datetime.now(dt.timezone.utc)
             if last_success_ts and (now_utc - last_success_ts) < cooldown:
                 logger.info(
                     "Notification skip (cooldown actif)",
                     extra={
                         "alert_id": str(alert.id),
                         "elapsed_seconds": int((now_utc - last_success_ts).total_seconds()),
-                        "cooldown_seconds": remind_seconds,
+                        "cooldown_seconds": int(remind_seconds),
                     },
                 )
                 return
 
-            # ------------------------------
-            # Construction du message
-            # ------------------------------
-
-            # 🔁 NOUVEAU :
-            # - on s'appuie sur MetricInstance.name_effective (nom réel reçu du payload)
-            # - fallback "unknown_metric" si non disponible
+            # ------------------------------------------------------------------
+            # 2) Construire payload -> déléguer à notify(payload)
+            # ------------------------------------------------------------------
             metric_name = getattr(metric_instance, "name_effective", "unknown_metric")
 
-            # ------------------------------------------------------------------
-            # ✅ Lien ALERT -> INCIDENT (pour préfixer "(#xxx)" dans notify())
-            #    On cherche l'incident BREACH OPEN correspondant au triplet
-            #    (client_id, machine_id, metric_instance_id).
-            #    Si introuvable, on laisse incident_id=None (notif non préfixée).
-            # ------------------------------------------------------------------
+            # Lien alert -> incident (pour préfixer "(#xxx)" dans notify())
             incident_id_for_prefix: uuid.UUID | None = None
             try:
                 if client_id and alert.machine_id and alert.metric_instance_id:
                     inc = session.scalar(
                         select(Incident)
-                       .where(
+                        .where(
                             Incident.client_id == client_id,
                             Incident.status == "OPEN",
                             Incident.incident_type == IncidentType.BREACH,
@@ -921,37 +1017,34 @@ def notify_alert(self, alert_id: str, *, remind_after_minutes: int | None = None
             base_msg = alert.message or f"Threshold breach on {metric_name}"
             text = f"{base_msg} - Valeur: {alert.current_value}"
 
-            # Statut logique pour l'UI
             sev_raw = (alert.severity or "warning").lower()
             ui_status = "error" if sev_raw == "critical" else "ok"
 
             payload = {
-                # ✅ Titre lisible + sera préfixé si incident_id est trouvé
                 "title": f"🚨 Alerte {sev_raw.upper()} : {metric_name}",
                 "text": text,
                 "severity": sev_raw,
-                "status": ui_status,  # expose un statut logique pour l'UI
+                "status": ui_status,
                 "client_id": client_id,
                 "alert_id": alert.id,
-                # ✅ clé : permet à notify() d'ajouter "(#xxx)"
                 "incident_id": incident_id_for_prefix,
             }
 
             notify_task.apply_async(kwargs={"payload": payload}, queue="notify")
+
             logger.info(
                 "Notification enqueued",
                 extra={
                     "alert_id": str(alert.id),
-                    "remind_seconds": remind_seconds,
+                    "remind_seconds": int(remind_seconds),
                     "used_override": override_seconds is not None,
-                    "status": ui_status,
+                    "grace_seconds": int(grace_seconds),
                     "incident_id": str(incident_id_for_prefix) if incident_id_for_prefix else None,
                 },
             )
 
     except Exception as e:
-        logger.error(f"Erreur notification alerte {alert_id}: {e}", exc_info=True)
-        # retry Celery selon la configuration du decorator
+        logger.error("Erreur notification alerte %s: %s", alert_id, e, exc_info=True)
         raise self.retry(exc=e)
 
 
