@@ -13,7 +13,7 @@
 
 x-app-common: &app-common
   image: ${DOCKER_USERNAME}/monitoring-api:${VERSION:-latest}
-  env_file: ../.env.docker
+  env_file: ../.env.production
   working_dir: /app/server
   restart: always
   networks:
@@ -249,7 +249,7 @@ services:
   # ---------------------------------------------------------------------------
   web:
     image: ${DOCKER_USERNAME}/monitoring-web:${VERSION:-latest}
-    env_file: ../.env.docker
+    env_file: ../.env.production
     container_name: monitoring-web
     environment:
       API_BASE_URL: "http://api:8000"
