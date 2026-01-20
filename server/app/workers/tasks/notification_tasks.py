@@ -48,12 +48,21 @@ _INC_PREFIX_RE = re.compile(r"^\(#\d+\)\s+")
 #       3) défaut dur = 30 minutes
 # ---------------------------------------------------------------------------
 def get_remind_seconds(client_id: str | uuid.UUID | None) -> int:
+    """
+    Retourne la fréquence de rappel (en secondes) pour un client.
+
+    ✅ Best practice :
+      - Valeur toujours > 0 (clamp) pour éviter les configs foireuses (0/None/-1)
+      - DB est la source de vérité ; fallback ENV si problème DB / client_id invalide
+    """
     DEFAULT_SECONDS = 30 * 60
 
     def _env_seconds() -> int:
         try:
             minutes = int(getattr(settings, "DEFAULT_ALERT_REMINDER_MINUTES", 30))
-            return max(1, minutes) * 60
+            # clamp
+            minutes = max(1, minutes)
+            return minutes * 60
         except Exception:
             return DEFAULT_SECONDS
 
@@ -73,14 +82,26 @@ def get_remind_seconds(client_id: str | uuid.UUID | None) -> int:
         with open_session() as s:
             repo = ClientSettingsRepository(s)
             seconds = repo.get_effective_reminder_seconds(cid)
-            return int(seconds)
+
+            # ✅ clamp fort : on refuse 0/None/négatif
+            sec = int(seconds or 0)
+            if sec <= 0:
+                logger.warning(
+                    "get_remind_seconds: invalid DB seconds=%r for client_id=%s → DEFAULT_SECONDS",
+                    seconds,
+                    str(cid),
+                )
+                return DEFAULT_SECONDS
+
+            return sec
+
     except Exception:
         logger.warning("get_remind_seconds: DB error → ENV fallback", exc_info=True)
         return _env_seconds()
 
 
 def _fallback_channel() -> str:
-    """Canal Slack par défaut si rien n’est fourni."""
+    """Canal Slack par défaut si rien n'est fourni."""
     return settings.SLACK_DEFAULT_CHANNEL
 
 
@@ -305,7 +326,18 @@ def _check_cooldown(
     remind = get_remind_seconds(validated.client_id)
 
     if last_sent is not None and not is_resolved:
-        age = (dt.datetime.now(dt.timezone.utc) - last_sent).total_seconds()
+        # Sécurité : si last_sent est naïf, on le force en UTC
+        if last_sent.tzinfo is None:
+            last_sent = last_sent.replace(tzinfo=dt.timezone.utc)
+        else:
+            last_sent = last_sent.astimezone(dt.timezone.utc)
+
+        # Sécurité : éviter un delta négatif en cas de skew horloge
+        age = max(
+            0.0,
+            (dt.datetime.now(dt.timezone.utc) - last_sent).total_seconds(),
+        )   
+        
         if age < remind:
             _log_notification(
                 nrepo,
@@ -840,7 +872,7 @@ def notify_alert(self, alert_id: str, *, remind_after_minutes: int | None = None
     from app.infrastructure.persistence.database.models.alert import Alert
     from app.infrastructure.persistence.database.models.machine import Machine
     from app.infrastructure.persistence.database.models.metric_instance import MetricInstance
-    from app.workers.tasks.notification_tasks import notify as notify_task
+
 
     def _override_to_seconds(override_minutes: int | None) -> int | None:
         if isinstance(override_minutes, int) and override_minutes > 0:
@@ -1009,7 +1041,7 @@ def notify_alert(self, alert_id: str, *, remind_after_minutes: int | None = None
                 "incident_id": incident_id_for_prefix,
             }
 
-            notify_task.apply_async(kwargs={"payload": payload}, queue="notify")
+            notify.apply_async(kwargs={"payload": payload}, queue="notify")
             logger.info(
                 "notify_alert: enqueued",
                 extra={
@@ -1035,21 +1067,18 @@ def notify_incident_reminders_for_client(client_id: str) -> int:
     Envoie un rappel pour CHAQUE incident OPEN d'un client, en appliquant
     la règle métier "due reminder" AVANT d'enqueue.
 
-    Objectif (best practice) :
-      - Ne PAS enqueuer un rappel si la fréquence de rappel n'est pas atteinte.
-      - Éviter les courses "ouverture + rappel" (même seconde) qui bypassent
-        parfois le cooldown central dans tasks.notify (logs pas encore visibles).
+    ✅ Best practice :
+      - Ne PAS enqueuer si la fréquence de rappel n'est pas atteinte.
+      - Règle unique et déterministe :
+            reference = last_sent (si existe) sinon incident.created_at
+            due si (now - reference) >= remind_seconds
+      - Plus de heuristique "premier rappel après 60s".
 
-    Règle appliquée ici :
-      - remind_seconds = get_remind_seconds(client_id)
-      - On récupère le dernier envoi "réel" pour CET incident :
-          last_sent = NotificationRepository.get_last_sent_at_any(client_id, incident_id)
-      - Si last_sent existe :
-          -> on envoie seulement si (now - last_sent) >= remind_seconds
-      - Si last_sent n'existe pas :
-          -> on ne fait PAS de "premier rappel" immédiat ; on exige un âge minimal
-             de l'incident pour éviter le doublon avec la notif d'ouverture.
-             (par défaut : min(60s, remind_seconds))
+    Pourquoi cette règle ?
+      - Si la notif d'ouverture a bien été loggée avec incident_id :
+            last_sent existe → cadence depuis le dernier envoi réel.
+      - Si la notif d'ouverture n'a PAS incident_id (ou pas encore visible en DB) :
+            last_sent None → on retombe sur created_at → cadence respectée quand même.
 
     Notes :
       - On continue de passer incident_id dans le payload : tasks.notify conserve
@@ -1066,15 +1095,22 @@ def notify_incident_reminders_for_client(client_id: str) -> int:
         logger.warning("notify_incident_reminders_for_client: invalid client_id=%r", client_id)
         return 0
 
-    # 2) Période de rappel (source de vérité déjà centralisée)
+    # 2) Période de rappel (source de vérité centralisée)
     remind_seconds = int(get_remind_seconds(cid) or 0)
     if remind_seconds <= 0:
-        # Sécurité : si config foireuse, on évite de spammer.
+        # sécurité anti-spam (ne devrait plus arriver grâce au clamp dans get_remind_seconds)
         remind_seconds = 30 * 60
 
     now_utc = dt.datetime.now(dt.timezone.utc)
 
-    # 3) Charger les incidents OPEN
+    # Normalisation TZ : helper unique (évite de le redéfinir à chaque boucle)
+    def _to_utc(ts: dt.datetime | None) -> dt.datetime | None:
+        if ts is None:
+            return None
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=dt.timezone.utc)
+        return ts.astimezone(dt.timezone.utc)
+
     with open_session() as s:
         irepo = IncidentRepository(s)
         nrepo = NotificationRepository(s)
@@ -1083,12 +1119,6 @@ def notify_incident_reminders_for_client(client_id: str) -> int:
         if not incs:
             return 0
 
-        # 4) Garde-fou anti course "incident créé à l'instant"
-        #    - Empêche un rappel à T0 quand l'incident vient juste d'être ouvert
-        #      (doublon avec la notif d'ouverture).
-        #    - On choisit un délai court, borné par remind_seconds.
-        min_age_before_first_reminder = min(60, max(1, remind_seconds))
-
         enqueued = 0
 
         for inc in incs:
@@ -1096,51 +1126,47 @@ def notify_incident_reminders_for_client(client_id: str) -> int:
             if not inc_id:
                 continue
 
-            # 4.a) Age incident (si created_at disponible)
-            created_at = getattr(inc, "created_at", None)
-            if created_at is not None:
-                if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=dt.timezone.utc)
-                else:
-                    created_at = created_at.astimezone(dt.timezone.utc)
-
-                age_incident_sec = (now_utc - created_at).total_seconds()
-                if age_incident_sec < min_age_before_first_reminder:
-                    logger.info(
-                        "notify_incident_reminders_for_client: skip (incident too new)",
-                        extra={
-                            "client_id": str(cid),
-                            "incident_id": str(inc_id),
-                            "age_sec": int(age_incident_sec),
-                            "min_age_sec": int(min_age_before_first_reminder),
-                        },
-                    )
-                    continue
-
-            # 4.b) Dernier envoi réel pour CET incident (par design, le repo doit ignorer grace/group_open)
+            # --- 1) Cherche le dernier envoi "réel" pour cet incident
             last_sent = nrepo.get_last_sent_at_any(cid, inc_id)
 
-            # Si on a déjà envoyé récemment -> pas "due"
-            if last_sent is not None:
-                if last_sent.tzinfo is None:
-                    last_sent = last_sent.replace(tzinfo=dt.timezone.utc)
-                else:
-                    last_sent = last_sent.astimezone(dt.timezone.utc)
+            # --- 2) created_at comme fallback de référence (si last_sent absent)
+            created_at = getattr(inc, "created_at", None)
+            last_sent_utc = _to_utc(last_sent)
+            created_at_utc = _to_utc(created_at)
 
-                since_sec = (now_utc - last_sent).total_seconds()
-                if since_sec < remind_seconds:
-                    logger.debug(
-                        "notify_incident_reminders_for_client: skip (not due yet)",
-                        extra={
-                            "client_id": str(cid),
-                            "incident_id": str(inc_id),
-                            "since_last_sent_sec": int(since_sec),
-                            "remind_seconds": int(remind_seconds),
-                        },
-                    )
-                    continue
+            # ✅ référence métier unique
+            reference = last_sent_utc or created_at_utc
+            if reference is None:
+                # Cas extrême : pas de created_at ; on préfère NE PAS envoyer plutôt que spammer.
+                logger.warning(
+                    "notify_incident_reminders_for_client: skip (no reference timestamp)",
+                    extra={"client_id": str(cid), "incident_id": str(inc_id)},
+                )
+                continue
 
-            # 5) Due -> enqueue rappel
+            # Sécurité : éviter un delta négatif en cas de skew horloge
+            since_ref_sec = max(0.0, (now_utc - reference).total_seconds())
+
+            # ✅ FIX CRITIQUE : délai minimum = remind_seconds dans TOUS les cas
+            # (pas de "rappel à +60s" même pour le premier rappel)
+            min_delay_sec = remind_seconds
+
+            if since_ref_sec < min_delay_sec:
+                logger.debug(
+                    "notify_incident_reminders_for_client: skip (not due yet)",
+                    extra={
+                        "client_id": str(cid),
+                        "incident_id": str(inc_id),
+                        "since_reference_sec": int(since_ref_sec),
+                        "min_delay_sec": int(min_delay_sec),
+                        "remind_seconds": int(remind_seconds),
+                        "reference_kind": "last_sent" if last_sent_utc else "created_at",
+                        "is_first_reminder": last_sent_utc is None,
+                    },
+                )
+                continue
+
+            # ✅ Due -> enqueue rappel
             payload = {
                 "title": f"🔁 Rappel : {inc.title}",
                 "text": (
@@ -1150,12 +1176,9 @@ def notify_incident_reminders_for_client(client_id: str) -> int:
                     f"- Sévérité: {getattr(inc, 'severity', 'warning')}\n"
                 ),
                 "severity": (getattr(inc, "severity", None) or "warning"),
-                "client_id": cid,
+                "client_id": str(cid),
                 # ✅ clé critique : cooldown par incident (défense en profondeur dans tasks.notify)
                 "incident_id": str(inc_id),
-                # pas d'alert_id
-                # pas de skip_cooldown
-                # pas de resolved=True
             }
 
             notify.apply_async(kwargs={"payload": payload}, queue="notify")
@@ -1167,7 +1190,6 @@ def notify_incident_reminders_for_client(client_id: str) -> int:
             extra={
                 "client_id": str(cid),
                 "remind_seconds": int(remind_seconds),
-                "min_age_before_first_reminder": int(min_age_before_first_reminder),
                 "open_incidents": len(incs),
             },
         )
@@ -1177,13 +1199,17 @@ def notify_incident_reminders_for_client(client_id: str) -> int:
 @celery.task(name="tasks.incident_reminders", queue="notify")
 def incident_reminders() -> int:
     """
-    Runner périodique: déclenche notify_incident_reminders_for_client()
+    Runner périodique : déclenche notify_incident_reminders_for_client()
     pour tous les clients qui ont AU MOINS 1 incident OPEN.
+
+    ✅ Best practice :
+      - Beat peut tourner toutes les 60s, ce n'est pas un problème.
+      - La fonction downstream (notify_incident_reminders_for_client) doit être
+        le "gate" strict (due / not due).
     """
     from sqlalchemy import select, distinct
     from app.infrastructure.persistence.database.models.incident import Incident
 
-    client_ids: list[uuid.UUID] = []
     with open_session() as s:
         client_ids = list(
             s.scalars(
@@ -1223,7 +1249,6 @@ def notify_grouped_reminder(client_id: str):
     from app.infrastructure.persistence.repositories.incident_repository import IncidentRepository
     from app.infrastructure.persistence.repositories.client_settings_repository import ClientSettingsRepository
     from app.infrastructure.persistence.database.models.incident import Incident  # local typing
-    from app.workers.tasks.notification_tasks import notify as notify_task
 
     try:
         cid = uuid.UUID(str(client_id))
@@ -1262,12 +1287,10 @@ def notify_grouped_reminder(client_id: str):
             "title": "🔁 Rappel d'incidents ouverts",
             "text": text,
             "severity": "warning",
-            "client_id": cid,
-            # ✅ IMPORTANT : pas d'incident_id -> cooldown client-level dans tasks.notify
-            # "incident_id": ...,
+            "client_id": str(cid),
         }
 
-        notify_task.apply_async(kwargs={"payload": payload}, queue="notify")
+        notify.apply_async(kwargs={"payload": payload}, queue="notify")
 
 
 @celery.task(name="tasks.grouped_reminders", queue="notify")
@@ -1280,7 +1303,7 @@ def grouped_reminders() -> int:
       1) On minimise le bruit Celery :
          - on ne déclenche la tâche notify_grouped_reminder() QUE si un rappel
            est potentiellement "due" (fréquence atteinte).
-         - cela évite d’enfiler des milliers de tâches qui vont immédiatement skip.
+         - cela évite d'enfiler des milliers de tâches qui vont immédiatement skip.
 
       2) Source de vérité :
          - remind_seconds provient de get_remind_seconds(client_id)
@@ -1295,10 +1318,8 @@ def grouped_reminders() -> int:
     Retour :
       - int : nombre de tâches notify_grouped_reminder effectivement enqueued.
     """
-    from app.infrastructure.persistence.database.session import open_session
     from app.infrastructure.persistence.database.models.client_settings import ClientSettings
     from app.application.services.notification_service import get_last_notification_sent_at
-    from app.workers.tasks.notification_tasks import get_remind_seconds
 
     now_utc = dt.datetime.now(dt.timezone.utc)
 
@@ -1414,4 +1435,3 @@ def test_notification(client_id: str | None = None):
     except Exception as e:
         logger.error("Test notification failed", extra={"error": str(e)}, exc_info=True)
         return {"status": "error", "message": str(e)}
-

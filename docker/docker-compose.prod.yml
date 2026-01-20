@@ -63,7 +63,7 @@ services:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379/0"
       PROXY_HEADERS: "1"
-      FORWARDED_ALLOW_IPS: "127.0.0.1,172.30.0.0/16,172.31.0.0/16"
+      FORWARDED_ALLOW_IPS: "127.0.0.1,172.31.0.0/16,172.32.0.0/16"
     depends_on:
       db:
         condition: service_healthy
@@ -81,11 +81,11 @@ services:
       start_period: 40s
     networks:
       - private
+      - public
     labels:
       # Traefik activation
       - "traefik.enable=true"
-      - "traefik.docker.network=monitoring-prod-private"
-      
+
       # Router pour /api/* (neonmonitor.dockl.com)
       - "traefik.http.routers.api.rule=Host(`neonmonitor.dockl.com`) && PathPrefix(`/api`)"
       - "traefik.http.routers.api.entrypoints=websecure"
@@ -93,16 +93,16 @@ services:
       - "traefik.http.routers.api.tls.certresolver=letsencrypt"
       - "traefik.http.routers.api.service=api"
       - "traefik.http.services.api.loadbalancer.server.port=8000"
-      
+
       # Rate limiting API général
       - "traefik.http.middlewares.api-ratelimit.ratelimit.average=10"
       - "traefik.http.middlewares.api-ratelimit.ratelimit.burst=20"
       - "traefik.http.middlewares.api-ratelimit.ratelimit.period=1s"
-      
+
       # Rate limiting spécifique ingest (plus permissif)
       - "traefik.http.middlewares.ingest-ratelimit.ratelimit.average=10"
       - "traefik.http.middlewares.ingest-ratelimit.ratelimit.burst=60"
-      
+
       # Router prioritaire pour /api/v1/ingest/* avec rate limit spécifique
       - "traefik.http.routers.api-ingest.rule=Host(`neonmonitor.dockl.com`) && PathPrefix(`/api/v1/ingest`)"
       - "traefik.http.routers.api-ingest.entrypoints=websecure"
@@ -111,7 +111,7 @@ services:
       - "traefik.http.routers.api-ingest.priority=10"
       - "traefik.http.routers.api-ingest.service=api"
       - "traefik.http.routers.api-ingest.middlewares=ingest-ratelimit@docker"
-      
+
       # Rate limit par défaut pour les autres routes API
       - "traefik.http.routers.api.middlewares=api-ratelimit@docker"
     deploy:
@@ -307,7 +307,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=monitoring-prod-public"
-      
+
       # Router pour / (UI principale)
       - "traefik.http.routers.web.rule=Host(`neonmonitor.dockl.com`)"
       - "traefik.http.routers.web.entrypoints=websecure"
@@ -316,11 +316,11 @@ services:
       - "traefik.http.routers.web.priority=1"
       - "traefik.http.routers.web.service=web"
       - "traefik.http.services.web.loadbalancer.server.port=3000"
-      
+
       # Rate limiting web
       - "traefik.http.middlewares.web-ratelimit.ratelimit.average=30"
       - "traefik.http.middlewares.web-ratelimit.ratelimit.burst=50"
-      
+
       # Security headers
       - "traefik.http.middlewares.security-headers.headers.stsSeconds=31536000"
       - "traefik.http.middlewares.security-headers.headers.stsIncludeSubdomains=true"
@@ -328,7 +328,7 @@ services:
       - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
       - "traefik.http.middlewares.security-headers.headers.browserXssFilter=true"
       - "traefik.http.middlewares.security-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
-      
+
       - "traefik.http.routers.web.middlewares=web-ratelimit@docker,security-headers@docker"
     deploy:
       resources:
@@ -345,22 +345,29 @@ services:
     command:
       # API et Dashboard (sécurisé)
       - "--api.dashboard=true"
+      - "--api.insecure=false"
       - "--ping=true"
-      
+
+      # Global hardening
+      - "--global.checknewversion=false"
+      - "--global.sendanonymoususage=false"
+
       # Providers
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
       - "--providers.docker.network=monitoring-prod-public"
-      
+
       # Entrypoints
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      
+      - "--entrypoints.websecure.forwardedHeaders.trustedIPs=127.0.0.1/32,172.31.0.0/16,172.32.0.0/16"
+
+
       # Redirection HTTP -> HTTPS
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
       - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
-      
+
       # Let's Encrypt (HTTP Challenge)
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
       - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
@@ -368,11 +375,12 @@ services:
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
       # IMPORTANT: décommenter la ligne suivante pour tester en staging
       # - "--certificatesresolvers.letsencrypt.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
-      
+
       # Logs
       - "--log.level=INFO"
       - "--accesslog=true"
       - "--accesslog.filepath=/var/log/traefik/access.log"
+      - "--accesslog.format=json"
     ports:
       - "80:80"
       - "443:443"
@@ -383,7 +391,6 @@ services:
     restart: always
     networks:
       - public
-      - private
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 10s
@@ -397,11 +404,11 @@ services:
       - "traefik.http.routers.traefik.tls=true"
       - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
       - "traefik.http.routers.traefik.service=api@internal"
-      
+      - "traefik.http.routers.traefik.middlewares=traefik-strip@docker,traefik-auth@docker"
+      - "traefik.http.middlewares.traefik-strip.stripprefix.prefixes=/traefik"
       # BasicAuth (générer avec: htpasswd -nb admin password)
       # Exemple: admin:$apr1$xyz... (à remplacer)
       - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH:-admin:$$apr1$$8kV7qH2Y$$9Z8nF9eQ1xKZ0Q6X2eP.J0}"
-      - "traefik.http.routers.traefik.middlewares=traefik-auth@docker"
     logging:
       driver: "json-file"
       options:
@@ -445,7 +452,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=monitoring-prod-public"
-      
+
       # Router pour /status/* sur michevre1.vps.webdock.cloud
       - "traefik.http.routers.status.rule=Host(`michevre1.vps.webdock.cloud`) && PathPrefix(`/status`)"
       - "traefik.http.routers.status.entrypoints=websecure"
@@ -453,10 +460,10 @@ services:
       - "traefik.http.routers.status.tls.certresolver=letsencrypt"
       - "traefik.http.routers.status.service=status"
       - "traefik.http.services.status.loadbalancer.server.port=9100"
-      
+
       # Strip /status prefix
       - "traefik.http.middlewares.status-strip.stripprefix.prefixes=/status"
-      
+
       # Redirect / -> /status/ sur michevre1.vps.webdock.cloud
       - "traefik.http.routers.status-root.rule=Host(`michevre1.vps.webdock.cloud`) && Path(`/`)"
       - "traefik.http.routers.status-root.entrypoints=websecure"
@@ -465,7 +472,7 @@ services:
       - "traefik.http.routers.status-root.middlewares=status-redirect@docker"
       - "traefik.http.middlewares.status-redirect.redirectregex.regex=^https://michevre1.vps.webdock.cloud/$$"
       - "traefik.http.middlewares.status-redirect.redirectregex.replacement=https://michevre1.vps.webdock.cloud/status/"
-      
+
       - "traefik.http.routers.status.middlewares=status-strip@docker"
     deploy:
       resources:
@@ -488,8 +495,14 @@ volumes:
 # =============================================================================
 networks:
   public:
-    external: true
+    driver: bridge
     name: monitoring-prod-public
+    ipam:
+      config:
+        - subnet: 172.32.0.0/16
   private:
-    external: true
+    driver: bridge
     name: monitoring-prod-private
+    ipam:
+      config:
+        - subnet: 172.31.0.0/16
