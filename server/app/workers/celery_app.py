@@ -82,6 +82,7 @@ celery.conf.update(
         Queue("heartbeat"),
         Queue("http"),
         Queue("notify"),
+        Queue("outbox"),
     ),
     # File par défaut si non routée explicitement.
     # NOTE: si tu veux repérer immédiatement les tasks non routées / typos,

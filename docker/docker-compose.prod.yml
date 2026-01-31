@@ -108,7 +108,7 @@ services:
       - "traefik.http.routers.api-ingest.entrypoints=websecure"
       - "traefik.http.routers.api-ingest.tls=true"
       - "traefik.http.routers.api-ingest.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.api-ingest.priority=10"
+      - "traefik.http.routers.api-ingest.priority=100"
       - "traefik.http.routers.api-ingest.service=api"
       - "traefik.http.routers.api-ingest.middlewares=ingest-ratelimit@docker"
 
@@ -397,18 +397,22 @@ services:
       timeout: 5s
       retries: 3
     labels:
-      # Dashboard Traefik sécurisé (basicauth)
       - "traefik.enable=true"
-      - "traefik.http.routers.traefik.rule=Host(`neonmonitor.dockl.com`) && PathPrefix(`/traefik`)"
+
+      # Dashboard Traefik sur sous-domaine dédié
+      # On limite volontairement aux endpoints Traefik (dashboard + API) au lieu d'accepter tout path.
+      - "traefik.http.routers.traefik.rule=Host(`traefik.neonmonitor.dockl.com`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))"
       - "traefik.http.routers.traefik.entrypoints=websecure"
       - "traefik.http.routers.traefik.tls=true"
       - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+
+      # Le dashboard est servi par Traefik (interne)
       - "traefik.http.routers.traefik.service=api@internal"
-      - "traefik.http.routers.traefik.middlewares=traefik-strip@docker,traefik-auth@docker"
-      - "traefik.http.middlewares.traefik-strip.stripprefix.prefixes=/traefik"
-      # BasicAuth (générer avec: htpasswd -nb admin password)
-      # Exemple: admin:$apr1$xyz... (à remplacer)
-      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH:-admin:$$apr1$$8kV7qH2Y$$9Z8nF9eQ1xKZ0Q6X2eP.J0}"
+
+      # Auth Basic
+      - "traefik.http.routers.traefik.middlewares=traefik-auth@docker"
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_AUTH}"
+
     logging:
       driver: "json-file"
       options:

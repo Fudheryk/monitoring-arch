@@ -29,7 +29,6 @@ services:
   # ---------------------------------------------------------------------------
   migrate:
     <<: *app-common
-    container_name: monitoring-migrate-dev
     command: ["alembic", "upgrade", "head"]
     healthcheck:
       disable: true
@@ -52,7 +51,6 @@ services:
   # ---------------------------------------------------------------------------
   api:
     <<: *app-common
-    container_name: monitoring-api-dev
     command: ["api"]
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
@@ -108,7 +106,6 @@ services:
   # ---------------------------------------------------------------------------
   worker:
     <<: *app-common
-    container_name: monitoring-worker-dev
     command: >
       sh -lc "
         celery -A app.workers.celery_app.celery worker
@@ -149,7 +146,6 @@ services:
   # ---------------------------------------------------------------------------
   beat:
     <<: *app-common
-    container_name: monitoring-beat-dev
     command: ["sh", "-lc", "celery -A app.workers.celery_app.celery beat -l debug --schedule /tmp/celerybeat-schedule --pidfile /tmp/celerybeat.pid"]
     environment:
       DATABASE_URL: "postgresql+psycopg://postgres:${DB_PASSWORD}@db:5432/monitoring"
@@ -184,7 +180,6 @@ services:
   # ---------------------------------------------------------------------------
   db:
     image: postgres:16
-    container_name: monitoring-db-dev
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -213,7 +208,6 @@ services:
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7
-    container_name: monitoring-redis-dev
     command: redis-server --save "" --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
       test: ["CMD", "sh", "-c", "redis-cli ping | grep -q PONG"]
@@ -239,7 +233,6 @@ services:
     build:
       context: ../webapp
       dockerfile: Dockerfile.dev
-    container_name: monitoring-web-dev
     working_dir: /app/webapp
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3000", "--reload"]
     environment:
@@ -290,7 +283,6 @@ services:
   # ---------------------------------------------------------------------------
   traefik:
     image: traefik:v3.2
-    container_name: monitoring-traefik-dev
     command:
       # API et Dashboard
       - "--api.dashboard=true"
@@ -347,7 +339,6 @@ services:
     build:
       context: ./flaky
       dockerfile: Dockerfile
-    container_name: monitoring-flaky-dev
     ports:
       - "127.0.0.1:8081:80"
     restart: unless-stopped
@@ -363,7 +354,6 @@ services:
   # ---------------------------------------------------------------------------
   mailhog:
     image: mailhog/mailhog
-    container_name: monitoring-mailhog-dev
     ports:
       - "1025:1025"
       - "8025:8025"
@@ -387,7 +377,6 @@ services:
     build:
       context: ../status-dashboard
       dockerfile: Dockerfile
-    container_name: monitoring-status-dev
     working_dir: /app
     volumes:
       - ../status-dashboard:/app:ro
