@@ -23,6 +23,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 COMPOSE_FILE="docker/docker-compose.prod.yml"
+# IMPORTANT: forcer le project name pour pointer sur les conteneurs prod existants
+# (sinon "docker compose -f ..." peut utiliser un autre projet et dumper une DB vide)
+COMPOSE_PROJECT="monitoring-prod"
 BACKUP_DIR="backups/postgres"
 METADATA_DIR="backups/metadata"
 LOCK_FILE="/tmp/monitoring-backup.lock"
@@ -134,17 +137,20 @@ echo "→ Rétention: ${RETENTION_DAYS} jours"
 
 # --- 6. Vérification/démarrage service DB ------------------------------------
 echo "→ Vérification service PostgreSQL..."
-if ! docker compose -f "$COMPOSE_FILE" ps db --format json 2>/dev/null | grep -q '"State":"running"'; then
+if ! docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" ps db --format json 2>/dev/null | grep -q '"State":"running"'; then
   echo "⚠️  Service 'db' non démarré, démarrage..."
-  docker compose -f "$COMPOSE_FILE" up -d db >/dev/null 2>&1
+  docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" up -d db >/dev/null 2>&1
 fi
+
+echo "→ Container name:"
+docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" ps -q db | xargs -r docker inspect -f '{{.Name}}'
 
 # --- 6.bis Vérification migrations en cours ----------------------------------
 echo "→ Vérification migrations en cours..."
 max_migration_wait=180  # 3 minutes max
 migration_waited=0
 
-while docker compose -f "$COMPOSE_FILE" ps migrate --format json 2>/dev/null | grep -q '"State":"running"'; do
+while docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" ps migrate --format json 2>/dev/null | grep -q '"State":"running"'; do
   if [[ $migration_waited -ge $max_migration_wait ]]; then
     error_msg="Migration bloquée depuis ${max_migration_wait}s, abandon du backup"
     echo "❌ $error_msg"
@@ -164,7 +170,7 @@ fi
 # --- 7. Attente que PostgreSQL soit prêt -------------------------------------
 echo "→ Attente réponse PostgreSQL (max 60s)..."
 for i in {1..60}; do
-  if docker compose -f "$COMPOSE_FILE" exec -T db \
+  if docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" exec -T db \
       pg_isready -U postgres -d monitoring >/dev/null 2>&1; then
     echo "✅ PostgreSQL prêt après ${i}s"
     break
@@ -174,7 +180,7 @@ for i in {1..60}; do
     error_msg="PostgreSQL non disponible après 60s"
     echo "❌ $error_msg"
     echo "📋 Logs PostgreSQL:"
-    docker compose -f "$COMPOSE_FILE" logs --tail=50 db 2>/dev/null || true
+    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" logs --tail=50 db 2>/dev/null || true
     send_alert "$error_msg"
     exit 1
   fi
@@ -184,7 +190,7 @@ done
 
 # --- 8. Collecte métadonnées pré-backup --------------------------------------
 echo "→ Collecte métadonnées base de données..."
-pre_backup_stats=$(docker compose -f "$COMPOSE_FILE" exec -T \
+pre_backup_stats=$(docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" exec -T \
   -e PGPASSWORD="$DB_PASSWORD" db \
   psql -U postgres -d monitoring --quiet --no-align --tuples-only -c "
     SELECT json_build_object(
@@ -201,9 +207,10 @@ pre_backup_stats=$(docker compose -f "$COMPOSE_FILE" exec -T \
 echo "→ Début du dump PostgreSQL..."
 start_time=$(date +%s)
 
-if ! docker compose -f "$COMPOSE_FILE" exec -T \
+if ! docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" exec -T \
   -e PGPASSWORD="$DB_PASSWORD" db \
   pg_dump -U postgres -d monitoring \
+    --schema=public \
     --no-owner \
     --no-acl \
     --verbose \
@@ -246,7 +253,7 @@ echo "✅ Backup validé: ${backup_size} (${backup_size_bytes} octets)"
 
 # --- 11. Collecte métadonnées post-backup ------------------------------------
 echo "→ Finalisation métadonnées..."
-post_backup_stats=$(docker compose -f "$COMPOSE_FILE" exec -T \
+post_backup_stats=$(docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" exec -T \
   -e PGPASSWORD="$DB_PASSWORD" db \
   psql -U postgres -d monitoring --quiet --no-align --tuples-only -c "
     SELECT json_build_object(
