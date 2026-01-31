@@ -98,6 +98,8 @@ def evaluate_machine(machine_id) -> int:
     from app.infrastructure.persistence.database.models.sample import Sample
     from app.infrastructure.persistence.database.models.machine import Machine
     from app.infrastructure.persistence.database.models.alert import Alert
+    from app.infrastructure.persistence.database.models.notification_log import NotificationLog
+
 
     from app.infrastructure.persistence.repositories.alert_repository import AlertRepository
     from app.infrastructure.persistence.repositories.client_settings_repository import ClientSettingsRepository
@@ -154,17 +156,6 @@ def evaluate_machine(machine_id) -> int:
         # 3) Cache staleness + GRACE (source: client_settings.grace_period_seconds)
         # -------------------------------------------------------------------
         staleness_threshold_sec = csrepo.get_effective_metric_staleness_seconds(client_id)
-
-        # ✅ Grace metrics : confirmation persistance avant première notif (et incident)
-        try:
-            grace_seconds = int(csrepo.get_effective_grace_period_seconds(client_id) or 0)
-            grace_seconds = max(0, grace_seconds)
-        except Exception:
-            # fallback safe
-            grace_seconds = 0
-
-        grace_delta = timedelta(seconds=grace_seconds)
-
         pairs = trepo.for_machine(machine_uuid)
 
         for th, metric_instance in pairs:
@@ -270,57 +261,23 @@ def evaluate_machine(machine_id) -> int:
                 )
 
                 # ------------------------------------------------------------
-                # ✅ 6.a.bis) GRACE metrics : confirmer persistance
-                #
-                # Règle :
-                # - On n'enqueue la 1ère notif notify_alert QUE si :
-                #     * sévérité éligible
-                #     * et grace=0 OU (now - alert.triggered_at) >= grace
-                #
-                # Pourquoi ici ?
-                # - évite d'enfiler notify_alert immédiatement alors qu'on veut attendre.
-                # - on réutilise l'unique "horloge" stable : Alert.triggered_at (définie dans create_firing).
+                # ✅ Enqueue immédiat à la création :
+                # La GRACE client est gérée dans notify_alert() (post-commit),
+                # qui re-planifie la tâche jusqu’à expiration de la grace.
                 # ------------------------------------------------------------
                 ok_sev = th.severity in {"warning", "error", "critical"}
 
-                # triggered_at est posé à la création et reste stable si FIRING continue
-                started_at = getattr(alert, "triggered_at", None)
-                if started_at is not None:
-                    if started_at.tzinfo is None:
-                        started_at = started_at.replace(tzinfo=timezone.utc)
-                    else:
-                        started_at = started_at.astimezone(timezone.utc)
-
-                grace_ok = True
-                if grace_seconds > 0 and started_at is not None:
-                    grace_ok = (now - started_at) >= grace_delta
-
-                # Si created=True, on est dans le "premier défaut" : on gate selon grace_ok
+                # On enqueue au premier défaut; la grace est appliquée dans notify_alert()
                 if created and ok_sev:
-                    if grace_ok:
-                        alerts_to_notify.append(str(alert.id))
-                    else:
-                        logger.info(
-                            "evaluate_machine: grace active → do not enqueue notify_alert yet",
-                            extra={
-                                "client_id": str(client_id),
-                                "machine_id": str(machine_uuid),
-                                "alert_id": str(alert.id),
-                                "metric_instance_id": str(metric_instance.id),
-                                "grace_seconds": int(grace_seconds),
-                            },
-                        )
-                        # Rien à faire ici : notify_alert (avec sa logique) s'en chargera
-                        # lors du prochain cycle quand grace_ok deviendra True.
+                    alerts_to_notify.append(str(alert.id))
 
                 # ------------------------------------------------------------
                 # 6.b) Incident : ouverture si nécessaire
                 #
-                # ✅ Par cohérence “grace = confirmer persistance”, on applique le même gate.
-                # OPTION : si tu veux ouvrir l'incident immédiatement (même pendant la grace),
-                #         supprime ce if grace_ok et garde seulement `if client_id: ...`.
+                # Note : ici on ouvre l'incident immédiatement (si client_id),
+                # la grace ne concerne que la notification.
                 # ------------------------------------------------------------
-                if client_id and grace_ok:
+                if client_id:
                     incident_title = _threshold_incident_title(machine.hostname, metric_instance.name_effective)
 
                     irepo.open_breach_incident(
@@ -349,6 +306,8 @@ def evaluate_machine(machine_id) -> int:
                     .limit(1)
                 )
 
+                existing_alert_id = existing_alert.id if existing_alert else None
+
                 resolved_incident = None
 
                 resolved_alert_count = 0
@@ -367,7 +326,27 @@ def evaluate_machine(machine_id) -> int:
                         metric_instance_id=metric_instance.id,
                     )
 
-                if resolved_alert_count and resolved_incident:
+                # ------------------------------------------------------------
+                # ✅ Règle métier :
+                # Ne pas notifier la résolution si aucune notif d'ouverture
+                # (slack/email success) n'a été envoyée pour cette alerte.
+                # ------------------------------------------------------------
+                should_notify_resolution = False
+                if resolved_alert_count and resolved_incident and existing_alert_id is not None:
+                    first_success_ts = session.scalar(
+                        select(NotificationLog.sent_at)
+                        .where(
+                            NotificationLog.alert_id == existing_alert_id,
+                            NotificationLog.status == "success",
+                            NotificationLog.sent_at.is_not(None),
+                            NotificationLog.provider.in_(("slack", "email")),
+                        )
+                        .order_by(NotificationLog.sent_at.asc())
+                        .limit(1)
+                    )
+                    should_notify_resolution = first_success_ts is not None
+
+                if resolved_alert_count and resolved_incident and should_notify_resolution:
                     threshold_resolutions_to_notify.append(
                         {
                             "client_id": client_id,
@@ -378,6 +357,17 @@ def evaluate_machine(machine_id) -> int:
                             "threshold_condition": th.condition,
                             "last_value": value,
                         }
+                    )
+                elif resolved_alert_count and resolved_incident and not should_notify_resolution:
+                    logger.info(
+                        "evaluate_machine: skip resolution notification (no successful raised notification)",
+                        extra={
+                            "client_id": str(client_id),
+                            "machine_id": str(machine_uuid),
+                            "alert_id": str(existing_alert_id) if existing_alert_id else None,
+                            "metric_instance_id": str(metric_instance.id),
+                            "threshold_id": str(th.id),
+                        },
                     )
 
         # -------------------------------------------------------------------
