@@ -6,4 +6,11 @@
     rel="stylesheet"
     href="{{ request.app.url_path_for('static', path='styles.css') }}?v={{ version_cache_bust }}"
   />
+  <link rel="icon" href="{{ request.app.url_path_for('static', path='favicon/favicon.ico') }}?v={{ version_cache_bust }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ request.app.url_path_for('static', path='favicon/favicon-32x32.png') }}?v={{ version_cache_bust }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ request.app.url_path_for('static', path='favicon/favicon-16x16.png') }}?v={{ version_cache_bust }}">
+  <link rel="apple-touch-icon" href="{{ request.app.url_path_for('static', path='favicon/apple-touch-icon.png') }}?v={{ version_cache_bust }}">
+
+  <link rel="manifest" href="{{ request.app.url_path_for('static', path='favicon/site.webmanifest') }}?v={{ version_cache_bust }}">
+  <meta name="theme-color" content="#9d50ff">
 </head>

@@ -58,6 +58,7 @@ FINGERPRINT = "f5355ba885eceec3b226bf1c746d7159baa891d9b47aa6d07369a47a8e4d5cc1"
 
 NO_DATA_WAIT_SECONDS = 320
 CELERY_LAG_SECONDS = 60
+# ⛔️ On va progressivement NE PLUS dépendre de ces sleeps (on garde les constantes au cas où)
 
 RUN_SALT = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
 
@@ -234,6 +235,100 @@ def wait_for_sql_count(
             _register_check(False, f"{label}: timeout after {timeout_s}s (last_count={last_n})")
             return
         time.sleep(step_s)
+
+
+def wait_alert_firing(metric_name: str, *, min_expected: int = 1, timeout_s: int = 120) -> None:
+    """
+    Poll métier: attend que l'alerte (table alerts) passe en FIRING pour une métrique.
+    """
+    sql = f"""
+    SELECT COUNT(*)
+    FROM alerts a
+    JOIN metric_instances mi ON mi.id = a.metric_instance_id
+    WHERE a.machine_id = ({sql_machine_id_subquery()})
+      AND a.status = 'FIRING'
+      AND mi.name_effective = '{metric_name}';
+    """
+    wait_for_sql_count(f"Alert FIRING ({metric_name})", sql, min_expected=min_expected, timeout_s=timeout_s, step_s=5)
+
+
+def wait_alert_resolved(metric_name: str, *, timeout_s: int = 120) -> None:
+    """
+    Poll métier: attend qu'il n'y ait PLUS d'alerte FIRING pour une métrique.
+    """
+    sql = f"""
+    SELECT COUNT(*)
+    FROM alerts a
+    JOIN metric_instances mi ON mi.id = a.metric_instance_id
+    WHERE a.machine_id = ({sql_machine_id_subquery()})
+      AND a.status = 'FIRING'
+      AND mi.name_effective = '{metric_name}';
+    """
+    t0 = time.time()
+    while True:
+        n = run_psql_scalar_int(textwrap.dedent(sql).strip().replace("\n", " "))
+        if n == 0:
+            _register_check(True, f"Alert NOT FIRING ({metric_name}): count=0")
+            return
+        if time.time() - t0 > timeout_s:
+            _register_check(False, f"Alert NOT FIRING ({metric_name}): timeout after {timeout_s}s (last_count={n})")
+            return
+        time.sleep(5)
+
+
+def wait_metric_last_value(metric_name: str, *, timeout_s: int = 120) -> None:
+    """
+    Poll métier: attend que metric_instances.last_value soit rempli (ingestion traitée + persistée).
+    """
+    sql = f"""
+    SELECT COUNT(*)
+    FROM metric_instances
+    WHERE machine_id = ({sql_machine_id_subquery()})
+      AND name_effective = '{metric_name}'
+      AND last_value IS NOT NULL
+      AND last_value <> '';
+    """
+    wait_for_sql_count(f"Metric last_value set ({metric_name})", sql, min_expected=1, timeout_s=timeout_s, step_s=5)
+
+
+def wait_incident_open_like(title_like_sql: str, *, timeout_s: int = 420) -> None:
+    """
+    Poll métier: attend l'ouverture d'au moins 1 incident (status=OPEN) matchant un filtre SQL sur title.
+    `title_like_sql` doit être un fragment SQL valide (ex: "title LIKE 'Machine % : pas de donnée envoyée%'").
+    """
+    sql = f"""
+    SELECT COUNT(*)
+    FROM incidents
+    WHERE client_id = (SELECT id FROM clients WHERE name = '{CLIENT_NAME}')
+      AND machine_id = ({sql_machine_id_subquery()})
+      AND status = 'OPEN'
+      AND ({title_like_sql});
+    """
+    wait_for_sql_count("Incident OPEN attendu", sql, min_expected=1, timeout_s=timeout_s, step_s=10)
+
+
+def wait_incident_resolved_like(title_like_sql: str, *, timeout_s: int = 240) -> None:
+    """
+    Poll métier: attend qu'il n'y ait PLUS d'incident OPEN matchant un filtre sur title (i.e. résolu/clos).
+    """
+    sql = f"""
+    SELECT COUNT(*)
+    FROM incidents
+    WHERE client_id = (SELECT id FROM clients WHERE name = '{CLIENT_NAME}')
+      AND machine_id = ({sql_machine_id_subquery()})
+      AND status = 'OPEN'
+      AND ({title_like_sql});
+    """
+    t0 = time.time()
+    while True:
+        n = run_psql_scalar_int(textwrap.dedent(sql).strip().replace("\n", " "))
+        if n == 0:
+            _register_check(True, "Incident résolu (plus d'OPEN)")
+            return
+        if time.time() - t0 > timeout_s:
+            _register_check(False, f"Incident résolu: timeout after {timeout_s}s (open_count={n})")
+            return
+        time.sleep(10)
 
 
 def get_client_id() -> str | None:
@@ -907,6 +1002,33 @@ def configure_thresholds() -> None:
     # Memory: DEFAULT à 85%
     create_threshold("memory.usage_percent", 85.0)
 
+def assert_thresholds_ready() -> None:
+    """
+    Post-condition "métier" après setup:
+    - les 2 thresholds DEFAULT existent et sont actifs
+    - l'alerting est activé sur les 2 métriques
+    """
+    sql_thr = f"""
+    SELECT COUNT(*)
+    FROM thresholds t
+    JOIN metric_instances mi ON mi.id = t.metric_instance_id
+    WHERE mi.machine_id = ({sql_machine_id_subquery()})
+      AND mi.name_effective IN ('cpu.usage_percent','memory.usage_percent')
+      AND t.name = 'default'
+      AND t.is_active = true;
+    """
+    assert_sql_count_equals("Post-condition: 2 thresholds DEFAULT actifs (cpu+mem)", sql_thr, expected=2)
+
+    sql_alert_on = f"""
+    SELECT COUNT(*)
+    FROM metric_instances
+    WHERE machine_id = ({sql_machine_id_subquery()})
+      AND name_effective IN ('cpu.usage_percent','memory.usage_percent')
+      AND is_alerting_enabled = true
+      AND is_paused = false;
+    """
+    assert_sql_count_equals("Post-condition: alerting activé (cpu+mem)", sql_alert_on, expected=2)
+ 
 
 # =========================
 # DIAGNOSTICS SQL
@@ -1076,6 +1198,9 @@ def scenario_0_setup():
     # Configurer les seuils
     configure_thresholds()
 
+    # ✅ Post-condition: thresholds + alerting OK (évite de lancer des scénarios bancals)
+    assert_thresholds_ready()
+
     # 🔧 Rappels: réduire le cooldown en e2e pour éviter skipped_cooldown
     set_client_reminder_seconds(5)
     
@@ -1095,7 +1220,9 @@ def scenario_1_onboarding_cpu():
             {"name": "cpu.usage_percent", "value": 42},
         ],
     )
-    sleep_with_log(CELERY_LAG_SECONDS, "laisser l'ingestion être traitée")
+
+    # ✅ Poll métier: ingestion réellement persistée
+    wait_metric_last_value("cpu.usage_percent", timeout_s=120)
 
     diag_metrics()
     diag_incidents_machine()
@@ -1106,7 +1233,8 @@ def scenario_1_onboarding_cpu():
 
 def scenario_2_no_data_machine_down():
     """Test 2 : NO-DATA global -> Machine not sending data"""
-    sleep_with_log(NO_DATA_WAIT_SECONDS, "laisser NO-DATA se déclencher (machine DOWN)")
+    # ✅ Poll métier: on attend l'incident machine-down OPEN
+    wait_incident_open_like(sql_nodata_machine_filter(), timeout_s=420)
 
     diag_metrics()
     diag_incidents_machine()
@@ -1122,8 +1250,10 @@ def scenario_3_machine_restored_full():
             {"name": "cpu.usage_percent", "value": 30},
         ],
     )
-    sleep_with_log(CELERY_LAG_SECONDS, "laisser freshness/evaluate traiter la restauration")
-
+    # ✅ Poll métier: ingestion persistée + incident machine-down résolu
+    wait_metric_last_value("cpu.usage_percent", timeout_s=120)
+    wait_incident_resolved_like(sql_nodata_machine_filter(), timeout_s=240)
+ 
     diag_metrics()
     diag_incidents_machine()
     diag_incidents_metric_nodata()
@@ -1139,7 +1269,9 @@ def scenario_4_add_memory_metric():
             {"name": "memory.usage_percent", "value": 40},
         ],
     )
-    sleep_with_log(CELERY_LAG_SECONDS, "traitement de l'ingestion CPU+MEM")
+    # ✅ Poll métier: les 2 last_value sont posés
+    wait_metric_last_value("cpu.usage_percent", timeout_s=120)
+    wait_metric_last_value("memory.usage_percent", timeout_s=120)
 
     diag_metrics()
     diag_incidents_machine()
@@ -1149,7 +1281,8 @@ def scenario_4_add_memory_metric():
 
 def scenario_5_partial_restore():
     """Test 5 : NO-DATA global puis restauration partielle"""
-    sleep_with_log(NO_DATA_WAIT_SECONDS, "NO-DATA global (CPU + MEM)")
+    # ✅ Poll métier: machine-down OPEN
+    wait_incident_open_like(sql_nodata_machine_filter(), timeout_s=420)
 
     diag_metrics()
     diag_incidents_machine()
@@ -1162,7 +1295,8 @@ def scenario_5_partial_restore():
             {"name": "cpu.usage_percent", "value": 25},
         ],
     )
-    sleep_with_log(CELERY_LAG_SECONDS, "traitement de la restauration partielle")
+    # ✅ Poll métier: CPU revient, mais on ne présume pas du comportement NO-DATA métrique
+    wait_metric_last_value("cpu.usage_percent", timeout_s=120)
 
     diag_metrics()
     diag_incidents_machine()
@@ -1179,8 +1313,11 @@ def scenario_6_full_restore_after_partial():
             {"name": "memory.usage_percent", "value": 35},
         ],
     )
-    sleep_with_log(CELERY_LAG_SECONDS, "traitement de la restauration complète")
-
+    # ✅ Poll métier: CPU+MEM persistés + machine-down résolu
+    wait_metric_last_value("cpu.usage_percent", timeout_s=120)
+    wait_metric_last_value("memory.usage_percent", timeout_s=120)
+    wait_incident_resolved_like(sql_nodata_machine_filter(), timeout_s=240)
+ 
     diag_metrics()
     diag_incidents_machine()
     diag_incidents_metric_nodata()
@@ -1196,7 +1333,9 @@ def scenario_7_threshold_breach_cpu_only():
             {"name": "memory.usage_percent", "value": 30},
         ],
     )
-    sleep_with_log(CELERY_LAG_SECONDS, "évaluation des seuils CPU high")
+    # ✅ Poll métier: on attend l'alerte FIRING (au lieu d'un sleep)
+    wait_metric_last_value("cpu.usage_percent", timeout_s=120)
+    wait_alert_firing("cpu.usage_percent", timeout_s=180)
 
     diag_metrics()
     diag_incidents_threshold()
@@ -1215,7 +1354,9 @@ def scenario_7_threshold_breach_cpu_only():
             {"name": "memory.usage_percent", "value": 30},
         ],
     )
-    sleep_with_log(CELERY_LAG_SECONDS, "re-check seuil (doit réutiliser l'incident)")
+    # ✅ Poll métier: l'alerte est toujours FIRING
+    wait_metric_last_value("cpu.usage_percent", timeout_s=120)
+    wait_alert_firing("cpu.usage_percent", timeout_s=180)
 
     # ✅ Le bug initial se voit ici : doit rester à 1
     assert_threshold_incident_open_exactly_one("cpu.usage_percent")
@@ -1230,7 +1371,10 @@ def scenario_8_threshold_back_to_normal():
             {"name": "memory.usage_percent", "value": 25},
         ],
     )
-    sleep_with_log(CELERY_LAG_SECONDS, "résolution des alertes de seuil")
+    # ✅ Poll métier: disparition du FIRING
+    wait_metric_last_value("cpu.usage_percent", timeout_s=120)
+    wait_metric_last_value("memory.usage_percent", timeout_s=120)
+    wait_alert_resolved("cpu.usage_percent", timeout_s=180)
 
     diag_metrics()
     diag_incidents_threshold()
@@ -1261,8 +1405,10 @@ def scenario_9_grouped_incident_reminder_email():
             {"name": "memory.usage_percent", "value": 30},
         ],
     )
-    sleep_with_log(CELERY_LAG_SECONDS, "ouvrir un incident (précondition reminder)")
-
+    # ✅ Poll métier: incident de seuil OPEN (précondition reminder)
+    wait_alert_firing("cpu.usage_percent", timeout_s=180)
+    wait_incident_open_like(sql_threshold_incident_filter("cpu.usage_percent"), timeout_s=240)
+ 
     # Précondition : au moins 1 incident OPEN
     pre_sql = f"""
     SELECT COUNT(*)
