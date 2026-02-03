@@ -30,66 +30,42 @@ def auto_resolve_stale_threshold_incidents(max_age_hours: int = 24) -> int:
     return count
 
 
-# -----------------------------------------------------------------------------
-# NEW: purge des samples (ne garder que les dernières ingestions)
-# -----------------------------------------------------------------------------
 @celery.task(name="maintenance.purge_samples")
-def purge_samples_task(keep_minutes: int = 120, batch_size: int = 50_000) -> int:
+def purge_samples(retention_minutes: int = 120, batch_size: int = 200_000) -> int:
     """
-    Purge `samples` en production sans refonte DB :
-    - conserve uniquement les N dernières minutes (default: 120 min)
-    - supprime en batches pour éviter les gros locks et transactions longues
-    - fait un ANALYZE pour remettre les stats du planner d’aplomb
-
-    NOTE:
-    - On ne fait PAS de VACUUM FULL ici (trop intrusif). À faire manuellement si besoin.
+    Purge les samples plus vieux que retention_minutes.
+    - batched delete pour limiter la pression IO/locks
+    - ANALYZE à la fin (pas de VACUUM FULL ici)
     """
-    keep_minutes = int(keep_minutes)
-    batch_size = int(batch_size)
-    if keep_minutes <= 0:
-        raise ValueError("keep_minutes must be > 0")
-    if batch_size <= 0:
-        raise ValueError("batch_size must be > 0")
-
-    total_deleted = 0
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=retention_minutes)
+    total = 0
 
     with open_session() as s:
         while True:
-            res = s.execute(
-                text(
-                    """
+            # Batch delete via CTID (rapide, évite un énorme DELETE unique)
+            r = s.execute(
+                text("""
                     WITH doomed AS (
-                      SELECT metric_instance_id, ts, seq
+                      SELECT ctid
                       FROM samples
-                      WHERE ts < now() - (:keep_minutes || ' minutes')::interval
-                      LIMIT :batch_size
+                      WHERE ts < :cutoff
+                      LIMIT :limit
                     )
-                    DELETE FROM samples s
-                    USING doomed d
-                    WHERE s.metric_instance_id = d.metric_instance_id
-                      AND s.ts = d.ts
-                      AND s.seq = d.seq
-                    RETURNING 1;
-                    """
-                ),
-                {"keep_minutes": keep_minutes, "batch_size": batch_size},
+                    DELETE FROM samples
+                    WHERE ctid IN (SELECT ctid FROM doomed)
+                    RETURNING 1
+                """),
+                {"cutoff": cutoff, "limit": batch_size},
             )
+            deleted = r.rowcount or 0
+            s.commit()
 
-            deleted = len(res.fetchall())
+            total += deleted
             if deleted == 0:
                 break
 
-            total_deleted += deleted
-            s.commit()
-
-        # stats planner
-        s.execute(text("ANALYZE samples;"))
+        s.execute(text("ANALYZE samples"))
         s.commit()
 
-    logger.info(
-        "purge_samples_task: deleted=%d keep_minutes=%d batch_size=%d",
-        total_deleted,
-        keep_minutes,
-        batch_size,
-    )
-    return total_deleted
+    logger.info("purge_samples: deleted=%d retention_minutes=%d batch_size=%d", total, retention_minutes, batch_size)
+    return total
