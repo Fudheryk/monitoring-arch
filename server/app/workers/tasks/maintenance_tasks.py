@@ -4,6 +4,8 @@ from __future__ import annotations
 from celery.utils.log import get_task_logger
 from sqlalchemy import text
 
+from datetime import datetime, timedelta, timezone
+
 from app.workers.celery_app import celery
 from app.infrastructure.persistence.database.session import open_session
 from app.infrastructure.persistence.repositories.incident_repository import IncidentRepository
