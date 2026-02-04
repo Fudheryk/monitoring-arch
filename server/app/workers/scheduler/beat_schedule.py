@@ -138,7 +138,7 @@ beat_schedule = {
 
 
     "purge-samples-every-300s": {
-        "task": "tasks.purge_samples",
+        "task": "maintenance.purge_samples",
         "schedule": 300.0,
         "args": (120, 200000),  # 2h de rétention, batch 200k
         "options": {"queue": "ingest"},
